@@ -16,6 +16,17 @@ function generateRoomCode(): string {
 export const createPublicLobby = mutation({
   args: { hostId: v.string() },
   handler: async (ctx, args) => {
+    // Purge stale rooms every time a new lobby is created to stay within limits
+    const now = Date.now();
+    const allRooms = await ctx.db.query("rooms").collect();
+    for (const room of allRooms) {
+      const hostStale = now - room.hostLastSeen > HEARTBEAT_TIMEOUT_MS * 4;
+      const isEndedOrOld = room.status === "ended" || (room.status === "waiting" && hostStale);
+      if (isEndedOrOld) {
+        await ctx.db.delete(room._id);
+      }
+    }
+
     let code = generateRoomCode();
     let existing = await ctx.db
       .query("rooms")
@@ -61,11 +72,13 @@ export const requestJoin = mutation({
     if (room.guestId) throw new Error("Room is full");
     if (room.status !== "waiting") throw new Error("Room is not available");
     if (room.hostId === args.guestId) throw new Error("Cannot join your own room");
-    const requests = room.joinRequests ?? [];
-    if (requests.includes(args.guestId)) throw new Error("Already requested");
 
+    // 1v1: auto-accept the guest immediately
     await ctx.db.patch(args.roomId, {
-      joinRequests: [...requests, args.guestId],
+      guestId: args.guestId,
+      status: "ready",
+      hostReady: false,
+      guestReady: false,
     });
 
     return true;
@@ -110,14 +123,20 @@ export const rejectGuest = mutation({
 });
 
 export const listPublicLobbies = query({
-  args: {},
-  handler: async (ctx) => {
-    const allRooms = await ctx.db
+  args: { now: v.number() },
+  handler: async (ctx, args) => {
+    const waitingRooms = await ctx.db
       .query("rooms")
-      .collect();
+      .withIndex("by_status", (q) => q.eq("status", "waiting"))
+      .take(50);
 
-    return allRooms
-      .filter((room) => room.isPublic === true && room.status === "waiting" && !room.guestId && room.hostLastSeen > Date.now() - HEARTBEAT_TIMEOUT_MS)
+    return waitingRooms
+      .filter(
+        (room) =>
+          room.isPublic === true &&
+          !room.guestId &&
+          room.hostLastSeen > args.now - HEARTBEAT_TIMEOUT_MS
+      )
       .map((room) => ({
         roomId: room._id,
         code: room.code,
@@ -204,7 +223,9 @@ export const heartbeat = mutation({
     if (isGuest) updates.guestLastSeen = Date.now();
 
     await ctx.db.patch(args.roomId, updates);
-    return true;
+
+    // Return current room state so host can detect guest joining even if subscriptions lag
+    return { guestId: room.guestId ?? null, status: room.status };
   },
 });
 
