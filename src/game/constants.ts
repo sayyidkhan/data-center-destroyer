@@ -124,8 +124,17 @@ export const FOOTER_H = MAP_CONFIG.footerHeight;
 export const FOOTER_GRID_MIN_W = MAP_CONFIG.footerGridMinWidth;
 
 // Legacy aliases kept for compatibility
-export const CANVAS_WIDTH = VIEWPORT_W;
-export const CANVAS_HEIGHT = VIEWPORT_H;
+/** Gutter reserved for the Excel-style coordinate rulers. */
+export const RULER_H = 26;  // top + bottom gutter (px each)
+export const RULER_W = 28;  // left + right gutter (px each)
+
+/** Canvas pixel dimensions — game viewport + ruler gutters on all four sides. */
+export const CANVAS_W = VIEWPORT_W + RULER_W * 2;
+export const CANVAS_H = VIEWPORT_H + RULER_H * 2;
+
+// Legacy aliases kept for compatibility
+export const CANVAS_WIDTH = CANVAS_W;
+export const CANVAS_HEIGHT = CANVAS_H;
 
 export const STARTING_GOLD = ECONOMY_CONFIG.startingGold;
 export const STARTING_LIVES = ECONOMY_CONFIG.startingLives;

@@ -1,8 +1,136 @@
 import type { GameState, Tower, Particle, VisualEffect, Vec2, Hero } from './types';
-import { CELL_SIZE, GRID_COLS, GRID_ROWS, MAP_W, VIEWPORT_COLS, VIEWPORT_W, VIEWPORT_H, TOWER_DEFS, ENEMY_DEFS, LASER_ACTIVE_MS, isPlayerBuildableCell } from './constants';
+import { CELL_SIZE, GRID_COLS, GRID_ROWS, MAP_W, VIEWPORT_COLS, VIEWPORT_W, VIEWPORT_H, CANVAS_W, CANVAS_H, RULER_H, RULER_W, TOWER_DEFS, ENEMY_DEFS, LASER_ACTIVE_MS, isPlayerBuildableCell } from './constants';
 
 const PLAYER_BASE_TARGET_ID = 'player_base';
 const OPPONENT_BASE_TARGET_ID = 'opponent_base';
+
+/** Excel-style column letter from 0-based column index (0 → A). */
+function excelColumnLabel(colIndex: number): string {
+  let n = colIndex + 1;
+  let s = '';
+  while (n > 0) {
+    n--;
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26);
+  }
+  return s;
+}
+
+/** Rulers + corner refs drawn in the gutter area outside the game grid. */
+function drawExcelCoordinateOverlay(ctx: CanvasRenderingContext2D, cameraX: number) {
+  const RH = RULER_H;
+  const RW = RULER_W;
+
+  const STRIP_BG   = '#060d1a';
+  const BORDER_CLR = 'rgba(0, 212, 255, 0.20)';
+  const TICK_CLR   = 'rgba(0, 212, 255, 0.35)';
+  const INK_COL    = 'rgba(0, 212, 255, 0.80)';
+  const INK_ROW    = 'rgba(130, 195, 255, 0.70)';
+  const FONT_LABEL = "600 9px 'JetBrains Mono', monospace";
+  const FONT_CHIP  = "700 10px 'JetBrains Mono', monospace";
+
+  const startCol    = Math.max(0, Math.floor(cameraX / CELL_SIZE));
+  const endCol      = Math.min(GRID_COLS, Math.ceil((cameraX + VIEWPORT_W) / CELL_SIZE));
+  const rightColIdx = Math.min(GRID_COLS - 1, endCol - 1);
+
+  const CW = CANVAS_W;
+  const CH = CANVAS_H;
+
+  ctx.save();
+
+  // fill gutter strips
+  ctx.fillStyle = STRIP_BG;
+  ctx.fillRect(0, 0, CW, RH);
+  ctx.fillRect(0, CH - RH, CW, RH);
+  ctx.fillRect(0, RH, RW, CH - RH * 2);
+  ctx.fillRect(CW - RW, RH, RW, CH - RH * 2);
+
+  // inner border lines
+  ctx.strokeStyle = BORDER_CLR;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, RH - 0.5);       ctx.lineTo(CW, RH - 0.5);
+  ctx.moveTo(0, CH - RH + 0.5);  ctx.lineTo(CW, CH - RH + 0.5);
+  ctx.moveTo(RW - 0.5, RH);      ctx.lineTo(RW - 0.5, CH - RH);
+  ctx.moveTo(CW - RW + 0.5, RH); ctx.lineTo(CW - RW + 0.5, CH - RH);
+  ctx.stroke();
+
+  // column labels top + bottom
+  ctx.font = FONT_LABEL;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let col = startCol; col < endCol; col++) {
+    const cx = RW + col * CELL_SIZE - cameraX + CELL_SIZE / 2;
+    if (cx < RW || cx > CW - RW) continue;
+    const label = excelColumnLabel(col);
+
+    ctx.strokeStyle = TICK_CLR;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx, RH - 4); ctx.lineTo(cx, RH - 1); ctx.stroke();
+    ctx.fillStyle = INK_COL;
+    ctx.fillText(label, cx, RH / 2);
+
+    ctx.beginPath(); ctx.moveTo(cx, CH - RH + 1); ctx.lineTo(cx, CH - RH + 4); ctx.stroke();
+    ctx.fillText(label, cx, CH - RH / 2);
+  }
+
+  // row labels left + right
+  ctx.font = FONT_LABEL;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let row = 0; row < GRID_ROWS; row++) {
+    const cy = RH + row * CELL_SIZE + CELL_SIZE / 2;
+    const label = String(row + 1);
+
+    ctx.strokeStyle = TICK_CLR;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(RW - 4, cy); ctx.lineTo(RW - 1, cy); ctx.stroke();
+    ctx.fillStyle = INK_ROW;
+    ctx.fillText(label, RW / 2, cy);
+
+    ctx.beginPath(); ctx.moveTo(CW - RW + 1, cy); ctx.lineTo(CW - RW + 4, cy); ctx.stroke();
+    ctx.fillText(label, CW - RW / 2, cy);
+  }
+
+  // corner chips
+  const chips: [string, 'tl' | 'tr' | 'bl' | 'br'][] = [
+    [`${excelColumnLabel(startCol)}1`,              'tl'],
+    [`${excelColumnLabel(rightColIdx)}1`,            'tr'],
+    [`${excelColumnLabel(startCol)}${GRID_ROWS}`,   'bl'],
+    [`${excelColumnLabel(rightColIdx)}${GRID_ROWS}`, 'br'],
+  ];
+
+  ctx.font = FONT_CHIP;
+  for (const [label, corner] of chips) {
+    const tw = ctx.measureText(label).width;
+    const pw = tw + 8;
+    const ph = RH - 4;
+    const x = corner.includes('l') ? 2 : CW - pw - 2;
+    const y = corner.includes('t') ? 2 : CH - ph - 2;
+
+    ctx.fillStyle = 'rgba(0, 212, 255, 0.12)';
+    ctx.strokeStyle = 'rgba(0, 212, 255, 0.50)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x, y, pw, ph, 3);
+    } else {
+      ctx.rect(x, y, pw, ph);
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(210, 245, 255, 0.95)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + pw / 2, y + ph / 2 + 0.5);
+  }
+
+  ctx.restore();
+}
+
 
 export function renderGame(
   ctx: CanvasRenderingContext2D,
@@ -11,20 +139,25 @@ export function renderGame(
   time: number
 ) {
   ctx.save();
-  ctx.clearRect(0, 0, VIEWPORT_W, VIEWPORT_H);
+  ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
   if (state.phase === 'menu') {
+    // Menu backdrop fills the game viewport area (inside the ruler gutters)
+    ctx.save();
+    ctx.translate(RULER_W, RULER_H);
     drawMenuBackdrop(ctx, time);
     ctx.restore();
+    ctx.restore();
+    drawExcelCoordinateOverlay(ctx, state.cameraX);
     return;
   }
 
-  // Background
+  // Background fills only the game viewport area
   ctx.fillStyle = '#050810';
-  ctx.fillRect(0, 0, VIEWPORT_W, VIEWPORT_H);
+  ctx.fillRect(RULER_W, RULER_H, VIEWPORT_W, VIEWPORT_H);
 
-  // Translate by camera offset
-  ctx.translate(-state.cameraX, 0);
+  // Translate: gutter offset + camera pan
+  ctx.translate(RULER_W - state.cameraX, RULER_H);
 
   drawMapZones(ctx, state.cameraX);
   drawGrid(ctx, state, hoveredCell, state.cameraX, time);
@@ -43,6 +176,8 @@ export function renderGame(
   drawRangePreview(ctx, state, hoveredCell, state.cameraX);
 
   ctx.restore();
+
+  drawExcelCoordinateOverlay(ctx, state.cameraX);
 }
 
 /** Title screen only — crisp procedural backdrop instead of blurring the live map tiles. */

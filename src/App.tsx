@@ -3,7 +3,7 @@ import type { AttackPackageId, GameState, TowerType } from './game/types';
 import { commandHeroMove, createInitialState, deployAttackPackage, placeTower, sellTower, upgradeTower, startWave } from './game/engine';
 import { renderGame } from './game/renderer';
 import { type PerfStats, useGameLoop } from './hooks/useGameLoop';
-import { CELL_SIZE, GRID_COLS, VIEWPORT_COLS, VIEWPORT_W, VIEWPORT_H, MAP_W, HUD_SLOT_H, FOOTER_H, FOOTER_GRID_MIN_W, isPlayerBuildableCell } from './game/constants';
+import { CELL_SIZE, GRID_COLS, VIEWPORT_COLS, VIEWPORT_W, VIEWPORT_H, CANVAS_W, CANVAS_H, RULER_W, RULER_H, MAP_W, HUD_SLOT_H, FOOTER_H, FOOTER_GRID_MIN_W, isPlayerBuildableCell } from './game/constants';
 import { HUD } from './components/HUD';
 import { TowerInspector, TowerShopStrip } from './components/TowerShop';
 import { GameOverlay } from './components/GameOverlay';
@@ -113,10 +113,11 @@ export default function App() {
 
   const getWorldPoint = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = canvasRef.current!.getBoundingClientRect();
-    const scaleX = VIEWPORT_W / rect.width;
-    const scaleY = VIEWPORT_H / rect.height;
-    const viewX = (e.clientX - rect.left) * scaleX;
-    const viewY = (e.clientY - rect.top) * scaleY;
+    const scaleX = CANVAS_W / rect.width;
+    const scaleY = CANVAS_H / rect.height;
+    // Subtract ruler gutter so coords map to game-grid space
+    const viewX = (e.clientX - rect.left) * scaleX - RULER_W;
+    const viewY = (e.clientY - rect.top) * scaleY - RULER_H;
     return {
       x: viewX + stateRef.current.cameraX,
       y: viewY,
@@ -166,10 +167,11 @@ export default function App() {
     const { x, y } = getWorldCell(e);
     hoveredCellRef.current = { x, y };
 
-    // Edge pan
+    // Edge pan — compare against game viewport edges (inside ruler gutters)
     const rect = canvasRef.current!.getBoundingClientRect();
-    const scaleX = VIEWPORT_W / rect.width;
-    const localX = (e.clientX - rect.left) * scaleX;
+    const scaleX = CANVAS_W / rect.width;
+    const canvasX = (e.clientX - rect.left) * scaleX;
+    const localX = canvasX - RULER_W;
     if (localX < PAN_ZONE) mousePanRef.current = -1;
     else if (localX > VIEWPORT_W - PAN_ZONE) mousePanRef.current = 1;
     else mousePanRef.current = 0;
@@ -369,8 +371,8 @@ export default function App() {
           ref={gameChromeRef}
           className={`flex w-full shrink-0 flex-col overflow-hidden ${isGameActive ? 'bg-dark-800' : 'bg-dark-900'}`}
           style={{
-            width: VIEWPORT_W,
-            maxWidth: VIEWPORT_W,
+            width: CANVAS_W,
+            maxWidth: CANVAS_W,
             transform: fitScale !== 1 ? `scale(${fitScale})` : undefined,
             transformOrigin: 'top left',
           }}
@@ -398,16 +400,16 @@ export default function App() {
         {/* Main: canvas + shop — shrink-0 so flex parents never squash fixed canvas height */}
         <div
           className="relative z-10 flex shrink-0 items-stretch"
-          style={{ height: VIEWPORT_H + FOOTER_H }}
+          style={{ height: CANVAS_H + FOOTER_H }}
           onClick={handleOutsideSelectionClick}
         >
-          <div className="relative flex shrink-0 flex-col" style={{ width: VIEWPORT_W }}>
+          <div className="relative flex shrink-0 flex-col" style={{ width: CANVAS_W }}>
             {/* Isolate overlays to the grid only — inset-0 must not include the footer row */}
-            <div className="relative shrink-0 overflow-hidden" style={{ width: VIEWPORT_W, height: VIEWPORT_H }}>
+            <div className="relative shrink-0 overflow-hidden" style={{ width: CANVAS_W, height: CANVAS_H }}>
               <canvas
                 ref={canvasRef}
-                width={VIEWPORT_W}
-                height={VIEWPORT_H}
+                width={CANVAS_W}
+                height={CANVAS_H}
                 onClick={handleCanvasClick}
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
