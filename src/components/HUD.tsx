@@ -6,60 +6,18 @@ import type { PerfStats } from '../hooks/useGameLoop';
 interface HUDProps {
   state: GameState;
   perfStats: PerfStats;
+  voice: {
+    isListening: boolean;
+    isSupported: boolean;
+    liveTranscript: string;
+    lastTranscript: string;
+    lastError: string | null;
+    startListening: () => void;
+    stopListening: () => void;
+  };
   onStartMatch: () => void;
   onPause: () => void;
   onSetSpeed: (speed: number) => void;
-}
-
-function HudStatLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="font-mono text-xs font-semibold uppercase tracking-wide text-white/55">{children}</span>
-  );
-}
-
-function LivesRing({ value, max, pct, color }: { value: number; max: number; pct: number; color: string }) {
-  const size = 40;
-  const stroke = 3;
-  const r = (size - stroke) / 2 - 0.5;
-  const c = 2 * Math.PI * r;
-  const filled = (Math.min(100, Math.max(0, pct)) / 100) * c;
-
-  return (
-    <div
-      className="relative h-10 w-10 shrink-0"
-      title={`${value} / ${max} HP`}
-      aria-label={`Base HP ${value} of ${max}`}
-    >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90" aria-hidden>
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          fill="none"
-          className="stroke-dark-600"
-          strokeWidth={stroke}
-        />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          fill="none"
-          stroke={color}
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={`${filled} ${c}`}
-          className="transition-[stroke-dasharray] duration-300"
-          style={{ filter: `drop-shadow(0 0 3px ${color})` }}
-        />
-      </svg>
-      <span
-        className="absolute inset-0 flex items-center justify-center font-mono text-sm font-bold leading-none tabular-nums"
-        style={{ color }}
-      >
-        {value}
-      </span>
-    </div>
-  );
 }
 
 function MatchSide({ label, hp, maxHp, pct, heroLabel, heroAlive, heroHp, heroMaxHp, heroRespawnTimer, heroPct, tone }: {
@@ -117,7 +75,162 @@ function PerfReadout({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function HUD({ state, perfStats, onStartMatch, onPause, onSetSpeed }: HUDProps) {
+function CompactStat({ label, value, tone, prefix }: { label: string; value: string; tone: string; prefix?: string }) {
+  return (
+    <div className="flex min-w-0 flex-col justify-center gap-1 rounded-md bg-dark-900/45 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
+      <span className="truncate font-mono text-[10px] font-bold uppercase leading-none tracking-wide text-white/42">
+        {label}
+      </span>
+      <span className={`whitespace-nowrap font-mono text-base font-black leading-none tabular-nums ${tone}`}>
+        {prefix ? <span className="mr-0.5 opacity-80">{prefix}</span> : null}
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M12 14.5a3 3 0 0 0 3-3v-5a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M19 10.5a7 7 0 0 1-14 0M12 17.5V21M9 21h6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function VoicePanel({ voice }: { voice: HUDProps['voice'] }) {
+  const transcript = voice.liveTranscript || voice.lastTranscript;
+  const showCaption = voice.isListening || !!voice.liveTranscript || !!voice.lastError;
+  const title = voice.lastError
+    ? voice.lastError
+    : transcript
+      ? `Heard: ${transcript}`
+      : 'Say: build cannon at 4 6, hero move to 8 5, hero right, start wave';
+
+  return (
+    <div className="relative h-full shrink-0">
+      <button
+        type="button"
+        onClick={voice.isListening ? voice.stopListening : voice.startListening}
+        disabled={!voice.isSupported}
+        title={title}
+        aria-label={voice.isListening ? 'Stop voice control' : 'Start voice control'}
+        className={`relative flex h-full min-h-[4rem] w-12 shrink-0 items-center justify-center rounded-lg border transition-all focus-visible:outline-none active:scale-95 ${
+          voice.isListening
+            ? 'border-cyber-green/70 bg-cyber-green text-dark-900 shadow-[0_0_14px_rgba(0,255,136,0.42)]'
+            : voice.isSupported
+              ? 'border-cyber-blue/25 bg-dark-900/55 text-cyber-blue hover:border-cyber-blue/45 hover:bg-dark-700/80'
+              : 'cursor-not-allowed border-white/10 bg-dark-900/45 text-white/25'
+        }`}
+      >
+        <MicIcon />
+        <span
+          className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${
+            !voice.isSupported ? 'bg-red-300/70' : voice.isListening ? 'bg-cyber-green' : 'bg-white/25'
+          }`}
+        />
+      </button>
+
+      {showCaption ? (
+        <div className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-72 -translate-x-1/2 rounded-lg border border-cyber-blue/25 bg-dark-900/95 px-3 py-2 shadow-[0_14px_32px_rgba(0,0,0,0.45),0_0_18px_rgba(0,212,255,0.1)]">
+          <p className="mb-1 font-mono text-[10px] font-black uppercase leading-none tracking-[0.18em] text-cyber-blue/60">
+            Heard
+          </p>
+          <p className={`truncate font-mono text-xs font-bold leading-snug ${voice.lastError ? 'text-red-300' : voice.liveTranscript ? 'text-white/82' : 'text-white/55'}`}>
+            {voice.lastError ?? transcript ?? 'Listening...'}
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function MatchStatusPanel({ state }: { state: GameState }) {
+  const livesPct = (state.playerBaseHp / state.maxPlayerBaseHp) * 100;
+  const opponentPct = (state.opponentBaseHp / state.maxOpponentBaseHp) * 100;
+  const heroPct = (state.hero.hp / state.hero.maxHp) * 100;
+  const opponentHeroPct = (state.opponentHero.hp / state.opponentHero.maxHp) * 100;
+  const playerTowerCount = state.towers.filter(tower => tower.owner === 'player').length;
+  const opponentTowerCount = state.towers.filter(tower => tower.owner === 'opponent').length;
+  const playerAttackers = state.enemies.filter(enemy => enemy.owner === 'player').length;
+  const opponentAttackers = state.enemies.filter(enemy => enemy.owner === 'opponent').length;
+
+  return (
+    <div
+      className="box-border flex h-full min-h-0 w-full min-w-0 flex-col justify-center gap-1 overflow-hidden rounded-xl border border-solid border-cyber-green/35 bg-cyber-green/[0.08] px-2.5 py-1.5 shadow-[0_8px_26px_rgba(0,0,0,0.35),0_0_14px_rgba(0,255,136,0.08)] sm:px-3"
+      style={{ backgroundClip: 'padding-box' }}
+    >
+      <div className="flex min-h-0 w-full min-w-0 max-w-full flex-nowrap items-center justify-between gap-x-2 border-b border-solid border-white/[0.09] pb-1 sm:gap-x-3">
+        <div className="flex min-h-0 min-w-0 flex-1 items-center gap-x-2 overflow-hidden">
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full sm:h-2.5 sm:w-2.5 ${
+              state.phase === 'playing' ? 'animate-pulse bg-cyber-green' : 'bg-cyber-green/75'
+            }`}
+          />
+          <span className="min-w-0 truncate font-mono text-xs font-black uppercase leading-none tracking-wide text-cyber-green sm:text-sm">
+            {state.phase === 'paused'
+              ? 'PVP · PAUSED'
+              : state.phase === 'playing'
+                ? 'PVP · LIVE'
+                : state.phase === 'wave_complete' || state.phase === 'menu'
+                  ? 'PVP · READY'
+                  : state.phase === 'victory'
+                    ? 'PVP · VICTORY'
+                    : state.phase === 'game_over'
+                      ? 'PVP · DEFEAT'
+                      : 'Ready'}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-3 text-right font-mono text-[11px] tabular-nums text-white/65">
+          <span>Units {playerAttackers}/{opponentAttackers}</span>
+          <span>Towers {playerTowerCount}/{opponentTowerCount}</span>
+        </div>
+      </div>
+
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+        <MatchSide
+          label="Your Core"
+          hp={state.playerBaseHp}
+          maxHp={state.maxPlayerBaseHp}
+          pct={livesPct}
+          heroLabel="Hero"
+          heroAlive={state.hero.isAlive}
+          heroHp={state.hero.hp}
+          heroMaxHp={state.hero.maxHp}
+          heroRespawnTimer={state.hero.respawnTimer}
+          heroPct={heroPct}
+          tone="blue"
+        />
+        <div className="font-mono text-xs font-black tracking-wide text-white/40">VS</div>
+        <MatchSide
+          label="Enemy Core"
+          hp={state.opponentBaseHp}
+          maxHp={state.maxOpponentBaseHp}
+          pct={opponentPct}
+          heroLabel="Hero"
+          heroAlive={state.opponentHero.isAlive}
+          heroHp={state.opponentHero.hp}
+          heroMaxHp={state.opponentHero.maxHp}
+          heroRespawnTimer={state.opponentHero.respawnTimer}
+          heroPct={opponentHeroPct}
+          tone="red"
+        />
+      </div>
+    </div>
+  );
+}
+
+export function HUD({ state, perfStats, voice, onStartMatch, onPause, onSetSpeed }: HUDProps) {
   const [showPerfStats, setShowPerfStats] = React.useState(false);
   const livesPct = (state.playerBaseHp / state.maxPlayerBaseHp) * 100;
   const livesColor = livesPct > 60 ? '#00ff88' : livesPct > 30 ? '#ffcc00' : '#ff4444';
@@ -166,109 +279,19 @@ export function HUD({ state, perfStats, onStartMatch, onPause, onSetSpeed }: HUD
 
   return (
     <div className="relative grid h-full min-h-0 min-w-0 w-full grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] items-center gap-x-3 overflow-visible bg-dark-800 px-3 py-3 select-none">
-      {/* Left — resource strip (must clamp to viewport: w-max/chrome used to widen past VIEWPORT_W) */}
-      <div className="flex min-h-0 min-w-0 max-h-full w-full items-center self-center overflow-hidden border-r border-white/[0.07] pr-2">
-        <div className="flex min-w-0 w-full max-w-full items-stretch overflow-hidden">
-          <div className="flex shrink-0 flex-col justify-center gap-1.5 border-r border-white/[0.08] pr-2 sm:pr-3">
-            <HudStatLabel>Base</HudStatLabel>
-            <LivesRing
-              value={state.playerBaseHp}
-              max={state.maxPlayerBaseHp}
-              pct={livesPct}
-              color={livesColor}
-            />
-          </div>
-
-          <div className="grid min-h-[2.75rem] min-w-0 flex-1 grid-cols-3 divide-x divide-white/[0.08]">
-            <div className="flex min-w-0 flex-col justify-center gap-1.5 px-2 sm:px-3">
-              <HudStatLabel>Gold</HudStatLabel>
-              <span className="inline-flex min-w-0 max-w-full items-baseline gap-1 truncate font-mono text-lg font-bold leading-none tabular-nums text-yellow-300">
-                <span className="shrink-0 text-yellow-400/90 text-base leading-none">◆</span>
-                <span className="min-w-0 truncate">{formatCompactCount(state.gold)}</span>
-              </span>
-            </div>
-
-            <div className="flex min-w-0 flex-col justify-center gap-1.5 px-2 sm:px-3">
-              <HudStatLabel>Score</HudStatLabel>
-              <span className="whitespace-nowrap font-mono text-base font-bold leading-none tabular-nums text-cyber-blue sm:text-lg">
-                {formatCompactCount(state.score)}
-              </span>
-            </div>
-
-            <div className="flex min-w-0 flex-col justify-center gap-1.5 px-2 sm:px-3">
-              <HudStatLabel>Kills</HudStatLabel>
-              <span className="font-mono text-lg font-bold leading-none tabular-nums text-cyber-purple">
-                {formatCompactCount(state.totalKills)}
-              </span>
-            </div>
-          </div>
+      {/* Left — compact stats + voice controls */}
+      <div className="grid min-h-0 min-w-0 max-h-full w-full grid-cols-[minmax(0,1fr)_auto] items-stretch gap-2 self-center overflow-hidden border-r border-white/[0.07] pr-2">
+        <div className="grid min-h-0 min-w-0 grid-cols-2 gap-1.5">
+          <CompactStat label="Gold" value={formatCompactCount(state.gold)} tone="text-yellow-300" prefix="◆" />
+          <CompactStat label="HP" value={`${state.playerBaseHp}/${state.maxPlayerBaseHp}`} tone={livesColor === '#ff4444' ? 'text-red-300' : livesColor === '#ffcc00' ? 'text-yellow-300' : 'text-cyber-green'} />
+          <CompactStat label="Kills" value={formatCompactCount(state.totalKills)} tone="text-cyber-purple" />
+          <CompactStat label="Score" value={formatCompactCount(state.score)} tone="text-cyber-blue" />
         </div>
+        <VoicePanel voice={voice} />
       </div>
 
-      {/* Center — PvP match panel */}
-      <div className="flex h-full min-h-0 min-w-0 items-center justify-center overflow-x-visible overflow-y-hidden px-px">
-        <div
-          className="box-border flex h-[5.5rem] min-h-0 w-full min-w-0 max-w-xl flex-col justify-center gap-1 overflow-hidden rounded-xl border border-solid border-cyber-green/35 bg-cyber-green/[0.08] px-2.5 py-1.5 shadow-[0_8px_26px_rgba(0,0,0,0.35),0_0_14px_rgba(0,255,136,0.08)] sm:px-3"
-          style={{ backgroundClip: 'padding-box' }}
-        >
-          <div className="flex min-h-0 w-full min-w-0 max-w-full flex-nowrap items-center justify-between gap-x-2 border-b border-solid border-white/[0.09] pb-1 sm:gap-x-3">
-            <div className="flex min-h-0 min-w-0 flex-1 items-center gap-x-2 overflow-hidden">
-              <span
-                className={`h-2 w-2 shrink-0 rounded-full sm:h-2.5 sm:w-2.5 ${
-                  state.phase === 'playing' ? 'animate-pulse bg-cyber-green' : 'bg-cyber-green/75'
-                }`}
-              />
-              <span className="min-w-0 truncate font-mono text-xs font-black uppercase leading-none tracking-wide text-cyber-green sm:text-sm">
-                {state.phase === 'paused'
-                  ? 'PVP · PAUSED'
-                  : state.phase === 'playing'
-                    ? 'PVP · LIVE'
-                    : state.phase === 'wave_complete' || state.phase === 'menu'
-                      ? 'PVP · READY'
-                      : state.phase === 'victory'
-                        ? 'PVP · VICTORY'
-                        : state.phase === 'game_over'
-                          ? 'PVP · DEFEAT'
-                      : 'Ready'}
-              </span>
-            </div>
-            <div className="flex shrink-0 items-center gap-3 text-right font-mono text-[11px] tabular-nums text-white/65">
-              <span>Units {playerAttackers}/{opponentAttackers}</span>
-              <span>Towers {playerTowerCount}/{opponentTowerCount}</span>
-            </div>
-          </div>
-
-          <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-            <MatchSide
-              label="Your Core"
-              hp={state.playerBaseHp}
-              maxHp={state.maxPlayerBaseHp}
-              pct={livesPct}
-              heroLabel="Hero"
-              heroAlive={state.hero.isAlive}
-              heroHp={state.hero.hp}
-              heroMaxHp={state.hero.maxHp}
-              heroRespawnTimer={state.hero.respawnTimer}
-              heroPct={heroPct}
-              tone="blue"
-            />
-            <div className="font-mono text-xs font-black tracking-wide text-white/40">VS</div>
-            <MatchSide
-              label="Enemy Core"
-              hp={state.opponentBaseHp}
-              maxHp={state.maxOpponentBaseHp}
-              pct={opponentPct}
-              heroLabel="Hero"
-              heroAlive={state.opponentHero.isAlive}
-              heroHp={state.opponentHero.hp}
-              heroMaxHp={state.opponentHero.maxHp}
-              heroRespawnTimer={state.opponentHero.respawnTimer}
-              heroPct={opponentHeroPct}
-              tone="red"
-            />
-          </div>
-        </div>
-      </div>
+      {/* Center intentionally blank for now */}
+      <div className="min-h-0 min-w-0" />
 
       {/* Right — speed + perf toggle + action button */}
       <div className="relative flex min-h-0 min-w-0 max-h-full flex-col items-end justify-center gap-1.5 self-center overflow-visible border-l border-white/[0.07] pl-3">

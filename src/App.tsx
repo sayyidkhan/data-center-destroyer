@@ -3,8 +3,9 @@ import type { AttackPackageId, GameState, TowerType } from './game/types';
 import { commandHeroMove, createInitialState, deployAttackPackage, placeTower, sellTower, upgradeTower, startWave } from './game/engine';
 import { renderGame } from './game/renderer';
 import { type PerfStats, useGameLoop } from './hooks/useGameLoop';
+import { useVoiceController, type VoiceCommand } from './hooks/useVoiceController';
 import { CELL_SIZE, GRID_COLS, VIEWPORT_COLS, VIEWPORT_W, VIEWPORT_H, CANVAS_W, CANVAS_H, RULER_W, RULER_H, MAP_W, HUD_SLOT_H, FOOTER_H, FOOTER_GRID_MIN_W, isPlayerBuildableCell } from './game/constants';
-import { HUD } from './components/HUD';
+import { HUD, MatchStatusPanel } from './components/HUD';
 import { TowerInspector, TowerShopStrip } from './components/TowerShop';
 import { GameOverlay } from './components/GameOverlay';
 import { InspectMiniStat } from './components/InspectMiniStat';
@@ -254,6 +255,52 @@ export default function App() {
     setSnapshot({ ...stateRef.current });
   }, []);
 
+  const handleVoiceCommand = useCallback((command: VoiceCommand) => {
+    const state = stateRef.current;
+
+    if (command.type === 'build') {
+      stateRef.current = placeTower(state, command.gridX, command.gridY, command.tower);
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'heroMove') {
+      stateRef.current = commandHeroMove(
+        state,
+        command.gridX * CELL_SIZE + CELL_SIZE / 2,
+        command.gridY * CELL_SIZE + CELL_SIZE / 2,
+      );
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'heroNudge') {
+      stateRef.current = commandHeroMove(
+        state,
+        state.hero.x + command.dx * CELL_SIZE,
+        state.hero.y + command.dy * CELL_SIZE,
+      );
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'startWave') {
+      handleStartMatch();
+      return;
+    }
+
+    if (command.type === 'pause') {
+      handlePause();
+      return;
+    }
+
+    if (command.type === 'cancel') {
+      handleDeselect();
+    }
+  }, [handleDeselect, handlePause, handleStartMatch]);
+
+  const voice = useVoiceController(handleVoiceCommand);
+
   // Keyboard shortcuts
   useEffect(() => {
     const TOWER_KEYS: Record<string, TowerType> = {
@@ -388,6 +435,7 @@ export default function App() {
             <HUD
               state={snapshot}
               perfStats={perfStats}
+              voice={voice}
               onStartMatch={handleStartMatch}
               onPause={handlePause}
               onSetSpeed={handleSetSpeed}
@@ -445,8 +493,13 @@ export default function App() {
                   <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
                     <HeroStatus state={snapshot} />
                   </div>
-                  <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-                    <TowerShopStrip state={snapshot} onSelectTower={handleSelectTower} />
+                  <div className="flex min-h-0 min-w-0 flex-col gap-2 overflow-hidden">
+                    <div className="h-[5rem] shrink-0">
+                      <MatchStatusPanel state={snapshot} />
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                      <TowerShopStrip state={snapshot} onSelectTower={handleSelectTower} />
+                    </div>
                   </div>
                   <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
                     <TowerInspector
