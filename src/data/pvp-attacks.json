@@ -1,0 +1,52 @@
+{
+  "grunt_pack": {
+    "id": "grunt_pack",
+    "name": "Grunt Pack",
+    "description": "Cheap pressure against the opponent data center.",
+    "cost": 25,
+    "cooldownMs": 2500,
+    "travelMs": 4500,
+    "damage": 2,
+    "payload": [{ "type": "grunt", "count": 6, "interval": 450 }]
+  },
+  "speeder_rush": {
+    "id": "speeder_rush",
+    "name": "Speeder Rush",
+    "description": "Fast leak threat with low durability.",
+    "cost": 45,
+    "cooldownMs": 5000,
+    "travelMs": 3800,
+    "damage": 3,
+    "payload": [{ "type": "speeder", "count": 5, "interval": 300 }]
+  },
+  "tank_push": {
+    "id": "tank_push",
+    "name": "Tank Push",
+    "description": "Armored pressure that forces defensive upgrades.",
+    "cost": 70,
+    "cooldownMs": 8000,
+    "travelMs": 6500,
+    "damage": 5,
+    "payload": [{ "type": "tank", "count": 2, "interval": 1100 }]
+  },
+  "swarm_burst": {
+    "id": "swarm_burst",
+    "name": "Swarm Burst",
+    "description": "Many weak units to overload targeting.",
+    "cost": 60,
+    "cooldownMs": 7000,
+    "travelMs": 4200,
+    "damage": 4,
+    "payload": [{ "type": "swarm", "count": 14, "interval": 160 }]
+  },
+  "boss_signal": {
+    "id": "boss_signal",
+    "name": "Boss Signal",
+    "description": "Late-match pressure that chunks base HP.",
+    "cost": 140,
+    "cooldownMs": 16000,
+    "travelMs": 9000,
+    "damage": 10,
+    "payload": [{ "type": "boss", "count": 1, "interval": 1000 }]
+  }
+}

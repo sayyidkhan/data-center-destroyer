@@ -1,0 +1,721 @@
+{
+  "schema": "data-center-destroyer/game-data-bundle",
+  "version": "single-player-v1",
+  "contentHash": "fd4a9ea81daa95a4c763f34a7012f034713d6444134a6f50a5602f85cf90622c",
+  "sources": {
+    "map": "map.json",
+    "economy": "economy.json",
+    "hero": "hero.json",
+    "towers": "towers.json",
+    "enemies": "enemies.json",
+    "waves": "waves.json",
+    "combat": "combat.json",
+    "pvpAttacks": "pvp-attacks.json"
+  },
+  "data": {
+    "map": {
+      "cellSize": 36,
+      "gridCols": 66,
+      "gridRows": 14,
+      "viewportCols": 32,
+      "hudSlotHeight": 116,
+      "footerHeight": 292,
+      "footerGridMinWidth": 1120,
+      "pathWaypoints": [
+        [
+          62,
+          9
+        ],
+        [
+          59,
+          9
+        ],
+        [
+          59,
+          12
+        ],
+        [
+          49,
+          12
+        ],
+        [
+          49,
+          9
+        ],
+        [
+          39,
+          9
+        ],
+        [
+          39,
+          12
+        ],
+        [
+          29,
+          12
+        ],
+        [
+          29,
+          9
+        ],
+        [
+          19,
+          9
+        ],
+        [
+          19,
+          12
+        ],
+        [
+          9,
+          12
+        ],
+        [
+          9,
+          9
+        ],
+        [
+          6,
+          9
+        ],
+        [
+          6,
+          7
+        ],
+        [
+          3,
+          7
+        ]
+      ],
+      "attackPathWaypoints": [
+        [
+          3,
+          5
+        ],
+        [
+          6,
+          5
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          16,
+          2
+        ],
+        [
+          16,
+          5
+        ],
+        [
+          32,
+          5
+        ],
+        [
+          32,
+          2
+        ],
+        [
+          42,
+          2
+        ],
+        [
+          42,
+          5
+        ],
+        [
+          56,
+          5
+        ],
+        [
+          56,
+          2
+        ],
+        [
+          60,
+          2
+        ],
+        [
+          60,
+          7
+        ],
+        [
+          63,
+          7
+        ]
+      ],
+      "enemyTowerLoadout": [
+        {
+          "type": "cannon",
+          "gridX": 49,
+          "gridY": 7,
+          "damage": 1,
+          "fireRate": 0.7
+        },
+        {
+          "type": "laser",
+          "gridX": 54,
+          "gridY": 4,
+          "damage": 1,
+          "fireRate": 0.8
+        },
+        {
+          "type": "cannon",
+          "gridX": 58,
+          "gridY": 10,
+          "damage": 1,
+          "fireRate": 0.6
+        }
+      ]
+    },
+    "economy": {
+      "startingGold": 200,
+      "startingLives": 20,
+      "startingOffenseResource": 60,
+      "maxOffenseResource": 250,
+      "offenseResourcePerSecond": 4,
+      "aiAttackIntervalMs": 9000,
+      "aiStartingBuildGold": 120,
+      "aiBuildGoldPerSecond": 12,
+      "aiBuildIntervalMs": 5500,
+      "aiMaxTowers": 10,
+      "maxWaves": 15,
+      "sellRefundRate": 0.6,
+      "scorePerReward": 10,
+      "waveHpScalePerWave": 0.12
+    },
+    "hero": {
+      "start": {
+        "gridX": 5.5,
+        "gridY": 7
+      },
+      "stats": {
+        "speed": 145,
+        "damage": 5,
+        "range": 3.75,
+        "fireRate": 4,
+        "maxHp": 10,
+        "respawnMs": 10000,
+        "healPerSecond": 1
+      },
+      "projectile": {
+        "speed": 680,
+        "color": "#f6c453",
+        "size": 3
+      }
+    },
+    "towers": {
+      "cannon": {
+        "type": "cannon",
+        "name": "Cannon",
+        "cost": 75,
+        "damage": 45,
+        "hp": 3,
+        "range": 3.5,
+        "fireRate": 1.2,
+        "color": "#4a7fa5",
+        "accentColor": "#00d4ff",
+        "description": "Debuff tower. Cracks armor and exposes priority targets.",
+        "projectileType": "bullet",
+        "splashRadius": 0,
+        "slowAmount": 0,
+        "slowDuration": 0,
+        "upgradeCost": [
+          100,
+          175
+        ]
+      },
+      "laser": {
+        "type": "laser",
+        "name": "Laser",
+        "cost": 120,
+        "damage": 18,
+        "hp": 3,
+        "range": 4,
+        "fireRate": 8,
+        "color": "#e040fb",
+        "accentColor": "#ce93d8",
+        "description": "Rapid-fire laser. Low damage but high DPS.",
+        "projectileType": "laser_beam",
+        "splashRadius": 0,
+        "slowAmount": 0,
+        "slowDuration": 0,
+        "upgradeCost": [
+          150,
+          250
+        ]
+      },
+      "frost": {
+        "type": "frost",
+        "name": "Frost",
+        "cost": 100,
+        "damage": 20,
+        "hp": 3,
+        "range": 3,
+        "fireRate": 0.6,
+        "color": "#29b6f6",
+        "accentColor": "#80deea",
+        "description": "Slows enemies. Essential for crowd control.",
+        "projectileType": "frost_bolt",
+        "splashRadius": 2.25,
+        "slowAmount": 0.4,
+        "slowDuration": 2000,
+        "upgradeCost": [
+          130,
+          210
+        ]
+      },
+      "tesla": {
+        "type": "tesla",
+        "name": "Tesla",
+        "cost": 150,
+        "damage": 80,
+        "hp": 3,
+        "range": 3,
+        "fireRate": 0.8,
+        "color": "#ffee58",
+        "accentColor": "#fff176",
+        "description": "Chain lightning. Hits multiple enemies.",
+        "projectileType": "lightning",
+        "splashRadius": 1.5,
+        "slowAmount": 0,
+        "slowDuration": 0,
+        "upgradeCost": [
+          200,
+          350
+        ]
+      },
+      "missile": {
+        "type": "missile",
+        "name": "Missile",
+        "cost": 200,
+        "damage": 200,
+        "hp": 3,
+        "range": 5,
+        "fireRate": 0.4,
+        "color": "#ff7043",
+        "accentColor": "#ffab91",
+        "description": "Massive splash damage. Slow fire rate.",
+        "projectileType": "missile",
+        "splashRadius": 2,
+        "slowAmount": 0,
+        "slowDuration": 0,
+        "upgradeCost": [
+          275,
+          450
+        ]
+      }
+    },
+    "enemies": {
+      "grunt": {
+        "type": "grunt",
+        "hp": 80,
+        "speed": 80,
+        "reward": 10,
+        "armor": 0,
+        "color": "#ef5350",
+        "size": 10,
+        "isBoss": false
+      },
+      "speeder": {
+        "type": "speeder",
+        "hp": 40,
+        "speed": 160,
+        "reward": 15,
+        "armor": 0,
+        "color": "#ff9800",
+        "size": 8,
+        "isBoss": false
+      },
+      "tank": {
+        "type": "tank",
+        "hp": 400,
+        "speed": 45,
+        "reward": 30,
+        "armor": 15,
+        "color": "#78909c",
+        "size": 16,
+        "isBoss": false
+      },
+      "swarm": {
+        "type": "swarm",
+        "hp": 25,
+        "speed": 120,
+        "reward": 5,
+        "armor": 0,
+        "color": "#ab47bc",
+        "size": 7,
+        "isBoss": false
+      },
+      "boss": {
+        "type": "boss",
+        "hp": 2000,
+        "speed": 55,
+        "reward": 200,
+        "armor": 30,
+        "color": "#d32f2f",
+        "size": 22,
+        "isBoss": true
+      }
+    },
+    "waves": [
+      {
+        "enemies": [
+          {
+            "type": "grunt",
+            "count": 10,
+            "interval": 800
+          }
+        ],
+        "goldBonus": 25
+      },
+      {
+        "enemies": [
+          {
+            "type": "grunt",
+            "count": 12,
+            "interval": 700
+          },
+          {
+            "type": "speeder",
+            "count": 4,
+            "interval": 1200
+          }
+        ],
+        "goldBonus": 30
+      },
+      {
+        "enemies": [
+          {
+            "type": "speeder",
+            "count": 8,
+            "interval": 600
+          },
+          {
+            "type": "grunt",
+            "count": 8,
+            "interval": 800
+          }
+        ],
+        "goldBonus": 35
+      },
+      {
+        "enemies": [
+          {
+            "type": "tank",
+            "count": 3,
+            "interval": 2000
+          },
+          {
+            "type": "grunt",
+            "count": 10,
+            "interval": 700
+          }
+        ],
+        "goldBonus": 40
+      },
+      {
+        "enemies": [
+          {
+            "type": "swarm",
+            "count": 20,
+            "interval": 300
+          },
+          {
+            "type": "speeder",
+            "count": 6,
+            "interval": 600
+          }
+        ],
+        "goldBonus": 50
+      },
+      {
+        "enemies": [
+          {
+            "type": "tank",
+            "count": 5,
+            "interval": 1500
+          },
+          {
+            "type": "speeder",
+            "count": 10,
+            "interval": 500
+          }
+        ],
+        "goldBonus": 55
+      },
+      {
+        "enemies": [
+          {
+            "type": "grunt",
+            "count": 20,
+            "interval": 500
+          },
+          {
+            "type": "swarm",
+            "count": 15,
+            "interval": 350
+          }
+        ],
+        "goldBonus": 60
+      },
+      {
+        "enemies": [
+          {
+            "type": "tank",
+            "count": 6,
+            "interval": 1200
+          },
+          {
+            "type": "swarm",
+            "count": 20,
+            "interval": 300
+          }
+        ],
+        "goldBonus": 70
+      },
+      {
+        "enemies": [
+          {
+            "type": "boss",
+            "count": 1,
+            "interval": 5000
+          },
+          {
+            "type": "grunt",
+            "count": 15,
+            "interval": 600
+          }
+        ],
+        "goldBonus": 100
+      },
+      {
+        "enemies": [
+          {
+            "type": "speeder",
+            "count": 20,
+            "interval": 400
+          },
+          {
+            "type": "tank",
+            "count": 5,
+            "interval": 1000
+          }
+        ],
+        "goldBonus": 80
+      },
+      {
+        "enemies": [
+          {
+            "type": "swarm",
+            "count": 30,
+            "interval": 250
+          },
+          {
+            "type": "tank",
+            "count": 8,
+            "interval": 900
+          }
+        ],
+        "goldBonus": 90
+      },
+      {
+        "enemies": [
+          {
+            "type": "boss",
+            "count": 2,
+            "interval": 3000
+          },
+          {
+            "type": "speeder",
+            "count": 15,
+            "interval": 400
+          }
+        ],
+        "goldBonus": 120
+      },
+      {
+        "enemies": [
+          {
+            "type": "grunt",
+            "count": 25,
+            "interval": 400
+          },
+          {
+            "type": "tank",
+            "count": 10,
+            "interval": 800
+          },
+          {
+            "type": "speeder",
+            "count": 10,
+            "interval": 400
+          }
+        ],
+        "goldBonus": 110
+      },
+      {
+        "enemies": [
+          {
+            "type": "swarm",
+            "count": 40,
+            "interval": 200
+          },
+          {
+            "type": "boss",
+            "count": 2,
+            "interval": 4000
+          }
+        ],
+        "goldBonus": 150
+      },
+      {
+        "enemies": [
+          {
+            "type": "boss",
+            "count": 4,
+            "interval": 2000
+          },
+          {
+            "type": "tank",
+            "count": 15,
+            "interval": 700
+          },
+          {
+            "type": "swarm",
+            "count": 30,
+            "interval": 200
+          }
+        ],
+        "goldBonus": 300
+      }
+    ],
+    "combat": {
+      "laser": {
+        "activeMs": 2000,
+        "cooldownMs": 1000
+      },
+      "frost": {
+        "freezeChance": 0.2,
+        "freezeMs": 1000
+      },
+      "tesla": {
+        "chainRangeCells": 2.25
+      },
+      "cannon": {
+        "debuffChanceByLevel": [
+          0,
+          0.35,
+          0.5,
+          0.65
+        ],
+        "debuffDurationByLevel": [
+          0,
+          3000,
+          4000,
+          5000
+        ],
+        "armorBreakByLevel": [
+          0,
+          3,
+          6,
+          10
+        ],
+        "exposedBonusByLevel": [
+          0,
+          0.15,
+          0.25,
+          0.4
+        ]
+      },
+      "upgrade": {
+        "damageMultiplier": 1.5,
+        "rangeMultiplier": 1.15,
+        "fireRateMultiplier": 1.2
+      }
+    },
+    "pvpAttacks": {
+      "grunt_pack": {
+        "id": "grunt_pack",
+        "name": "Grunt Pack",
+        "description": "Cheap pressure against the opponent data center.",
+        "cost": 25,
+        "cooldownMs": 2500,
+        "travelMs": 4500,
+        "damage": 2,
+        "payload": [
+          {
+            "type": "grunt",
+            "count": 6,
+            "interval": 450
+          }
+        ]
+      },
+      "speeder_rush": {
+        "id": "speeder_rush",
+        "name": "Speeder Rush",
+        "description": "Fast leak threat with low durability.",
+        "cost": 45,
+        "cooldownMs": 5000,
+        "travelMs": 3800,
+        "damage": 3,
+        "payload": [
+          {
+            "type": "speeder",
+            "count": 5,
+            "interval": 300
+          }
+        ]
+      },
+      "tank_push": {
+        "id": "tank_push",
+        "name": "Tank Push",
+        "description": "Armored pressure that forces defensive upgrades.",
+        "cost": 70,
+        "cooldownMs": 8000,
+        "travelMs": 6500,
+        "damage": 5,
+        "payload": [
+          {
+            "type": "tank",
+            "count": 2,
+            "interval": 1100
+          }
+        ]
+      },
+      "swarm_burst": {
+        "id": "swarm_burst",
+        "name": "Swarm Burst",
+        "description": "Many weak units to overload targeting.",
+        "cost": 60,
+        "cooldownMs": 7000,
+        "travelMs": 4200,
+        "damage": 4,
+        "payload": [
+          {
+            "type": "swarm",
+            "count": 14,
+            "interval": 160
+          }
+        ]
+      },
+      "boss_signal": {
+        "id": "boss_signal",
+        "name": "Boss Signal",
+        "description": "Late-match pressure that chunks base HP.",
+        "cost": 140,
+        "cooldownMs": 16000,
+        "travelMs": 9000,
+        "damage": 10,
+        "payload": [
+          {
+            "type": "boss",
+            "count": 1,
+            "interval": 1000
+          }
+        ]
+      }
+    }
+  }
+}

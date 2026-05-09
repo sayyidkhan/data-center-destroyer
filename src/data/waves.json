@@ -1,0 +1,17 @@
+[
+  { "enemies": [{ "type": "grunt", "count": 10, "interval": 800 }], "goldBonus": 25 },
+  { "enemies": [{ "type": "grunt", "count": 12, "interval": 700 }, { "type": "speeder", "count": 4, "interval": 1200 }], "goldBonus": 30 },
+  { "enemies": [{ "type": "speeder", "count": 8, "interval": 600 }, { "type": "grunt", "count": 8, "interval": 800 }], "goldBonus": 35 },
+  { "enemies": [{ "type": "tank", "count": 3, "interval": 2000 }, { "type": "grunt", "count": 10, "interval": 700 }], "goldBonus": 40 },
+  { "enemies": [{ "type": "swarm", "count": 20, "interval": 300 }, { "type": "speeder", "count": 6, "interval": 600 }], "goldBonus": 50 },
+  { "enemies": [{ "type": "tank", "count": 5, "interval": 1500 }, { "type": "speeder", "count": 10, "interval": 500 }], "goldBonus": 55 },
+  { "enemies": [{ "type": "grunt", "count": 20, "interval": 500 }, { "type": "swarm", "count": 15, "interval": 350 }], "goldBonus": 60 },
+  { "enemies": [{ "type": "tank", "count": 6, "interval": 1200 }, { "type": "swarm", "count": 20, "interval": 300 }], "goldBonus": 70 },
+  { "enemies": [{ "type": "boss", "count": 1, "interval": 5000 }, { "type": "grunt", "count": 15, "interval": 600 }], "goldBonus": 100 },
+  { "enemies": [{ "type": "speeder", "count": 20, "interval": 400 }, { "type": "tank", "count": 5, "interval": 1000 }], "goldBonus": 80 },
+  { "enemies": [{ "type": "swarm", "count": 30, "interval": 250 }, { "type": "tank", "count": 8, "interval": 900 }], "goldBonus": 90 },
+  { "enemies": [{ "type": "boss", "count": 2, "interval": 3000 }, { "type": "speeder", "count": 15, "interval": 400 }], "goldBonus": 120 },
+  { "enemies": [{ "type": "grunt", "count": 25, "interval": 400 }, { "type": "tank", "count": 10, "interval": 800 }, { "type": "speeder", "count": 10, "interval": 400 }], "goldBonus": 110 },
+  { "enemies": [{ "type": "swarm", "count": 40, "interval": 200 }, { "type": "boss", "count": 2, "interval": 4000 }], "goldBonus": 150 },
+  { "enemies": [{ "type": "boss", "count": 4, "interval": 2000 }, { "type": "tank", "count": 15, "interval": 700 }, { "type": "swarm", "count": 30, "interval": 200 }], "goldBonus": 300 }
+]

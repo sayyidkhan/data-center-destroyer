@@ -1,0 +1,52 @@
+{
+  "grunt": {
+    "type": "grunt",
+    "hp": 80,
+    "speed": 80,
+    "reward": 10,
+    "armor": 0,
+    "color": "#ef5350",
+    "size": 10,
+    "isBoss": false
+  },
+  "speeder": {
+    "type": "speeder",
+    "hp": 40,
+    "speed": 160,
+    "reward": 15,
+    "armor": 0,
+    "color": "#ff9800",
+    "size": 8,
+    "isBoss": false
+  },
+  "tank": {
+    "type": "tank",
+    "hp": 400,
+    "speed": 45,
+    "reward": 30,
+    "armor": 15,
+    "color": "#78909c",
+    "size": 16,
+    "isBoss": false
+  },
+  "swarm": {
+    "type": "swarm",
+    "hp": 25,
+    "speed": 120,
+    "reward": 5,
+    "armor": 0,
+    "color": "#ab47bc",
+    "size": 7,
+    "isBoss": false
+  },
+  "boss": {
+    "type": "boss",
+    "hp": 2000,
+    "speed": 55,
+    "reward": 200,
+    "armor": 30,
+    "color": "#d32f2f",
+    "size": 22,
+    "isBoss": true
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "startingGold": 200,
+  "startingLives": 20,
+  "startingOffenseResource": 60,
+  "maxOffenseResource": 250,
+  "offenseResourcePerSecond": 4,
+  "aiAttackIntervalMs": 9000,
+  "aiStartingBuildGold": 120,
+  "aiBuildGoldPerSecond": 12,
+  "aiBuildIntervalMs": 5500,
+  "aiMaxTowers": 10,
+  "maxWaves": 15,
+  "sellRefundRate": 0.6,
+  "scorePerReward": 10,
+  "waveHpScalePerWave": 0.12
+}

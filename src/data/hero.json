@@ -1,0 +1,20 @@
+{
+  "start": {
+    "gridX": 5.5,
+    "gridY": 7
+  },
+  "stats": {
+    "speed": 145,
+    "damage": 5,
+    "range": 3.75,
+    "fireRate": 4,
+    "maxHp": 10,
+    "respawnMs": 10000,
+    "healPerSecond": 1
+  },
+  "projectile": {
+    "speed": 680,
+    "color": "#f6c453",
+    "size": 3
+  }
+}

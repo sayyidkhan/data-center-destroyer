@@ -1,0 +1,48 @@
+{
+  "cellSize": 36,
+  "gridCols": 66,
+  "gridRows": 14,
+  "viewportCols": 32,
+  "hudSlotHeight": 116,
+  "footerHeight": 292,
+  "footerGridMinWidth": 1120,
+  "pathWaypoints": [
+    [62, 9],
+    [59, 9],
+    [59, 12],
+    [49, 12],
+    [49, 9],
+    [39, 9],
+    [39, 12],
+    [29, 12],
+    [29, 9],
+    [19, 9],
+    [19, 12],
+    [9, 12],
+    [9, 9],
+    [6, 9],
+    [6, 7],
+    [3, 7]
+  ],
+  "attackPathWaypoints": [
+    [3, 5],
+    [6, 5],
+    [6, 2],
+    [16, 2],
+    [16, 5],
+    [32, 5],
+    [32, 2],
+    [42, 2],
+    [42, 5],
+    [56, 5],
+    [56, 2],
+    [60, 2],
+    [60, 7],
+    [63, 7]
+  ],
+  "enemyTowerLoadout": [
+    { "type": "cannon", "gridX": 49, "gridY": 7, "damage": 1, "fireRate": 0.7 },
+    { "type": "laser", "gridX": 54, "gridY": 4, "damage": 1, "fireRate": 0.8 },
+    { "type": "cannon", "gridX": 58, "gridY": 10, "damage": 1, "fireRate": 0.6 }
+  ]
+}
