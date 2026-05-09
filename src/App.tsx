@@ -629,7 +629,7 @@ export default function App() {
       </div>
 
       {menuStage === 'mp_lobby' && snapshot.phase === 'menu' && (
-        <MultiplayerLobby onBack={handleBackFromLobby} onJoined={handleJoinRoom} />
+        <MultiplayerLobby onBack={handleBackFromLobby} onJoined={handleJoinRoom} onReady={handleReady} />
       )}
     </div>
   );

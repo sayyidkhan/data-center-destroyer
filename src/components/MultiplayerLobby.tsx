@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 
 export type LobbyStage = 'create' | 'join' | 'waiting' | 'ready';
@@ -7,9 +7,10 @@ export type LobbyStage = 'create' | 'join' | 'waiting' | 'ready';
 interface MultiplayerLobbyProps {
   onBack: () => void;
   onJoined: (roomId: string, playerRole: 'host' | 'guest', roomSeed: number) => void;
+  onReady?: () => void;
 }
 
-export function MultiplayerLobby({ onBack, onJoined }: MultiplayerLobbyProps) {
+export function MultiplayerLobby({ onBack, onJoined, onReady }: MultiplayerLobbyProps) {
   const [stage, setStage] = useState<LobbyStage>('create');
   const [roomCode, setRoomCode] = useState('');
   const [inputCode, setInputCode] = useState('');
@@ -69,7 +70,15 @@ export function MultiplayerLobby({ onBack, onJoined }: MultiplayerLobbyProps) {
   }
 
   if (stage === 'ready') {
-    return <ReadyScreen onBack={onBack} />;
+    return (
+      <ReadyScreen
+        roomId={roomIdRef.current!}
+        roomCode={roomCode}
+        playerId={playerId}
+        onReady={onReady}
+        onBack={onBack}
+      />
+    );
   }
 
   return (
@@ -233,7 +242,40 @@ function WaitingRoom({
   );
 }
 
-function ReadyScreen({ onBack }: { onBack: () => void }) {
+function ReadyScreen({
+  roomId,
+  roomCode,
+  playerId,
+  onReady,
+  onBack,
+}: {
+  roomId: string;
+  roomCode: string;
+  playerId: string;
+  onReady?: () => void;
+  onBack: () => void;
+}) {
+  const room = useQuery(api.rooms.getRoom as any, { roomId });
+  const leaveRoom = useMutation(api.rooms.leaveRoom as any);
+  const [hasClickedReady, setHasClickedReady] = useState(false);
+
+  const isHost = room?.hostId === playerId;
+  const isGuest = room?.guestId === playerId;
+  const myReady = isHost ? room?.hostReady : room?.guestReady;
+  const opponentReady = isHost ? room?.guestReady : room?.hostReady;
+
+  const handleReady = useCallback(() => {
+    setHasClickedReady(true);
+    onReady?.();
+  }, [onReady]);
+
+  const handleLeave = useCallback(async () => {
+    try {
+      await leaveRoom({ roomId, playerId });
+    } catch {}
+    onBack();
+  }, [leaveRoom, roomId, playerId, onBack]);
+
   return (
     <div className="pointer-events-auto absolute inset-0 z-20 flex items-center justify-center p-4">
       <div className="relative z-10 flex w-full max-w-md flex-col items-center gap-5 rounded-2xl border border-cyber-blue/20 bg-dark-900/95 p-8 shadow-cyber backdrop-blur-sm">
@@ -243,19 +285,54 @@ function ReadyScreen({ onBack }: { onBack: () => void }) {
         >
           Opponent Connected
         </h2>
+
+        <div className="flex flex-col items-center gap-2">
+          <span className="font-mono text-xs uppercase tracking-widest text-white/40">Room Code</span>
+          <span className="rounded-xl border border-fuchsia-400/25 bg-fuchsia-400/10 px-6 py-2 font-mono text-2xl font-black tracking-[0.15em] text-fuchsia-300">
+            {roomCode}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-4 font-mono text-sm text-white/60">
+          <span className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${room?.hostReady ? 'bg-cyber-green shadow-[0_0_8px_rgba(100,255,218,0.6)]' : 'bg-white/20'}`} />
+            Host {room?.hostReady ? '(Ready)' : ''}
+          </span>
+          <span className="text-white/20">vs</span>
+          <span className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${room?.guestReady ? 'bg-cyber-green shadow-[0_0_8px_rgba(100,255,218,0.6)]' : 'bg-white/20'}`} />
+            Guest {room?.guestReady ? '(Ready)' : ''}
+          </span>
+        </div>
+
         <p className="text-center font-mono text-sm text-white/50">
           Both players must click Ready to begin the match.
         </p>
+
         <button
           type="button"
-          onClick={onBack}
+          onClick={handleReady}
+          disabled={hasClickedReady || myReady}
+          className="group relative overflow-hidden rounded-2xl border border-cyber-green/45 bg-cyber-green/[0.12] px-12 py-4 font-mono text-lg font-black uppercase tracking-[0.15em] text-cyber-green transition-all hover:scale-[1.02] hover:bg-cyber-green/[0.18] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ boxShadow: '0 0 30px rgba(0,255,136,0.18)' }}
+        >
+          {hasClickedReady || myReady ? 'Waiting for opponent...' : 'Ready'}
+        </button>
+
+        {opponentReady && (
+          <p className="font-mono text-xs text-cyber-green/70 animate-pulse">
+            Opponent is ready!
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={handleLeave}
           className="rounded-xl bg-dark-800/90 px-6 py-2.5 font-mono text-sm font-bold uppercase tracking-[0.15em] text-white/50 transition-all hover:bg-dark-700/95 hover:text-red-300"
         >
-          Leave
+          Leave Room
         </button>
       </div>
     </div>
   );
 }
-
-import { useQuery } from 'convex/react';
