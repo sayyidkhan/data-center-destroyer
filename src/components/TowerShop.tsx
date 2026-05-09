@@ -11,6 +11,7 @@ interface TowerShopProps {
   onSell: (id: string) => void;
   onDeselect: () => void;
   onDeployAttack: (id: AttackPackageId) => void;
+  opsScrollRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 function getTowerTraitLines(type: TowerType, level = 1): string[] {
@@ -102,7 +103,8 @@ export function TowerInspector({
   onSell,
   onDeselect,
   onDeployAttack,
-}: Pick<TowerShopProps, 'state' | 'onUpgrade' | 'onSell' | 'onDeselect' | 'onDeployAttack'>) {
+  opsScrollRef,
+}: Pick<TowerShopProps, 'state' | 'onUpgrade' | 'onSell' | 'onDeselect' | 'onDeployAttack' | 'opsScrollRef'>) {
   const selectedTower = state.towers.find(t => t.id === state.selectedTowerId);
   const selectedType = state.selectedTowerType;
 
@@ -119,7 +121,7 @@ export function TowerInspector({
       ) : selectedType ? (
         <SelectedBuildPanel type={selectedType} />
       ) : (
-        <AttackShopPanel state={state} onDeployAttack={onDeployAttack} />
+        <AttackShopPanel state={state} onDeployAttack={onDeployAttack} opsScrollRef={opsScrollRef} />
       )}
     </div>
   );
@@ -166,9 +168,11 @@ function BriefingPlaceholder() {
 function AttackShopPanel({
   state,
   onDeployAttack,
+  opsScrollRef,
 }: {
   state: GameState;
   onDeployAttack: (id: AttackPackageId) => void;
+  opsScrollRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const attackIds = Object.keys(ATTACK_PACKAGE_DEFS) as AttackPackageId[];
   const playerAttackers = state.enemies.filter(enemy => enemy.owner === 'player').length;
@@ -187,7 +191,7 @@ function AttackShopPanel({
         </span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-0.5">
+      <div ref={opsScrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-0.5">
         <div className="grid grid-cols-1 gap-1.5">
           {attackIds.map(id => {
             const def = ATTACK_PACKAGE_DEFS[id];

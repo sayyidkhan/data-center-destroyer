@@ -3,9 +3,9 @@ import type { AttackPackageId, GameState, TowerType } from './game/types';
 import { commandHeroMove, createInitialState, deployAttackPackage, placeTower, sellTower, upgradeTower, startWave } from './game/engine';
 import { renderGame } from './game/renderer';
 import { type PerfStats, useGameLoop } from './hooks/useGameLoop';
-import { useVoiceController, type VoiceCommand } from './hooks/useVoiceController';
+import { useVoiceController, type VoiceCommand, colIndexToLetter } from './hooks/useVoiceController';
 import { CELL_SIZE, GRID_COLS, VIEWPORT_COLS, VIEWPORT_W, VIEWPORT_H, CANVAS_W, CANVAS_H, RULER_W, RULER_H, MAP_W, HUD_SLOT_H, FOOTER_H, FOOTER_GRID_MIN_W, isPlayerBuildableCell } from './game/constants';
-import { HUD, MatchStatusPanel } from './components/HUD';
+import { HUD, MatchStatusPanel, type BattleLogEntry } from './components/HUD';
 import { TowerInspector, TowerShopStrip } from './components/TowerShop';
 import { GameOverlay } from './components/GameOverlay';
 import { InspectMiniStat } from './components/InspectMiniStat';
@@ -22,6 +22,9 @@ const CHROME_FRAME_STYLE = {
 
 type MenuStage = 'launch' | 'pick_mode';
 
+const CHAT_LOG_LIMIT = 8;
+const initialLogTime = Date.now();
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef<GameState>(createInitialState());
@@ -37,10 +40,31 @@ export default function App() {
     objects: 0,
     memoryMb: null,
   });
+  const nextBattleLogIdRef = useRef(1);
+  const [playerBattleLog, setPlayerBattleLog] = useState<BattleLogEntry[]>([
+    { id: 0, text: 'System: say "build cannon at D 6" or "hero move to H 5".', createdAt: initialLogTime, tone: 'info' },
+  ]);
+  const [opponentBattleLog, setOpponentBattleLog] = useState<BattleLogEntry[]>([
+    { id: -1, text: 'AI: defense grid online, awaiting match start.', createdAt: initialLogTime, tone: 'normal' },
+  ]);
   const hoveredCellRef = useRef<{ x: number; y: number } | null>(null);
+
+  const appendPlayerLog = useCallback((text: string, tone: BattleLogEntry['tone'] = 'normal') => {
+    const entry = { id: nextBattleLogIdRef.current++, text, createdAt: Date.now(), tone };
+    setPlayerBattleLog(prev => [...prev, entry].slice(-CHAT_LOG_LIMIT));
+  }, []);
+
+  const appendOpponentLog = useCallback((text: string, tone: BattleLogEntry['tone'] = 'normal') => {
+    const entry = { id: nextBattleLogIdRef.current++, text, createdAt: Date.now(), tone };
+    setOpponentBattleLog(prev => [...prev, entry].slice(-CHAT_LOG_LIMIT));
+  }, []);
 
   // Camera pan via mouse edge proximity
   const mousePanRef = useRef(0); // -1 left, 0 none, 1 right
+  // Smooth voice-scroll target: null = no active voice scroll
+  const voiceScrollTargetRef = useRef<number | null>(null);
+  // Ref to the Attack Ops scrollable list — driven by voice scrollOps commands
+  const opsScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Throttle React re-renders
   const lastSnapshotRef = useRef(0);
@@ -72,20 +96,89 @@ export default function App() {
     }
   }, [snapshot.phase]);
 
-  // Edge-pan ticker — runs separately from game loop
+  const prevBattleStateRef = useRef<{
+    phase: GameState['phase'];
+    playerAttackers: number;
+    opponentAttackers: number;
+    playerBaseHp: number;
+    opponentBaseHp: number;
+    opponentTowers: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const current = {
+      phase: snapshot.phase,
+      playerAttackers: snapshot.enemies.filter(enemy => enemy.owner === 'player').length,
+      opponentAttackers: snapshot.enemies.filter(enemy => enemy.owner === 'opponent').length,
+      playerBaseHp: snapshot.playerBaseHp,
+      opponentBaseHp: snapshot.opponentBaseHp,
+      opponentTowers: snapshot.towers.filter(tower => tower.owner === 'opponent').length,
+    };
+    const prev = prevBattleStateRef.current;
+    prevBattleStateRef.current = current;
+    if (!prev) return;
+
+    if (prev.phase !== current.phase) {
+      if (current.phase === 'playing') appendOpponentLog('AI: match live, pressure lanes opening.', 'danger');
+      if (current.phase === 'paused') appendOpponentLog('AI: simulation paused, no new orders.', 'warning');
+      if (current.phase === 'wave_complete') appendOpponentLog('AI: wave cleared, preparing next push.', 'info');
+      if (current.phase === 'victory') appendOpponentLog('AI: core breached, opponent defeated.', 'success');
+      if (current.phase === 'game_over') appendOpponentLog('AI: player core destroyed.', 'danger');
+    }
+
+    if (current.opponentAttackers > prev.opponentAttackers) {
+      appendOpponentLog(`AI: ${current.opponentAttackers} attackers detected. Suggest: reinforce path chokepoints.`, 'danger');
+    }
+
+    if (current.playerAttackers > prev.playerAttackers) {
+      appendPlayerLog(`Ops: ${current.playerAttackers} friendly attackers deployed toward enemy core.`, 'success');
+    }
+
+    if (current.opponentTowers > prev.opponentTowers) {
+      appendOpponentLog(`AI: new tower detected. Enemy now has ${current.opponentTowers}.`, 'warning');
+    }
+
+    if (current.playerBaseHp < prev.playerBaseHp) {
+      appendOpponentLog(`AI: your core hit, HP ${current.playerBaseHp}/${snapshot.maxPlayerBaseHp}.`, 'danger');
+      appendPlayerLog('Suggestion: move hero to intercept or build near the path.', 'warning');
+    }
+
+    if (current.opponentBaseHp < prev.opponentBaseHp) {
+      appendPlayerLog(`Ops: enemy core damaged, HP ${current.opponentBaseHp}/${snapshot.maxOpponentBaseHp}.`, 'success');
+    }
+  }, [appendOpponentLog, appendPlayerLog, snapshot]);
+
+  // Edge-pan + voice smooth-scroll ticker — runs separately from game loop
   useEffect(() => {
     let raf = 0;
     let last = 0;
+    const VOICE_SCROLL_SPEED = 600; // px/s for voice-initiated scroll
     const tick = (t: number) => {
       const dt = last ? Math.min((t - last) / 1000, 0.05) : 0;
       last = t;
+      const state = stateRef.current;
+      let camX = state.cameraX;
+
+      // Mouse edge pan
       const dir = mousePanRef.current;
       if (dir !== 0) {
-        const state = stateRef.current;
-        const newCamX = Math.max(0, Math.min(MAX_CAM_X, state.cameraX + dir * PAN_SPEED * dt));
-        if (newCamX !== state.cameraX) {
-          stateRef.current = { ...state, cameraX: newCamX };
+        camX = Math.max(0, Math.min(MAX_CAM_X, camX + dir * PAN_SPEED * dt));
+      }
+
+      // Voice smooth scroll — lerp toward target
+      const voiceTarget = voiceScrollTargetRef.current;
+      if (voiceTarget !== null) {
+        const remaining = voiceTarget - camX;
+        const step = Math.sign(remaining) * Math.min(Math.abs(remaining), VOICE_SCROLL_SPEED * dt);
+        camX = Math.max(0, Math.min(MAX_CAM_X, camX + step));
+        if (Math.abs(voiceTarget - camX) < 0.5) {
+          camX = Math.max(0, Math.min(MAX_CAM_X, voiceTarget));
+          voiceScrollTargetRef.current = null;
         }
+      }
+
+      if (camX !== state.cameraX) {
+        stateRef.current = { ...state, cameraX: camX };
       }
       raf = requestAnimationFrame(tick);
     };
@@ -255,11 +348,19 @@ export default function App() {
     setSnapshot({ ...stateRef.current });
   }, []);
 
-  const handleVoiceCommand = useCallback((command: VoiceCommand) => {
+  const handleVoiceCommand = useCallback((command: VoiceCommand, transcript: string) => {
     const state = stateRef.current;
 
     if (command.type === 'build') {
       stateRef.current = placeTower(state, command.gridX, command.gridY, command.tower);
+      const placed = stateRef.current !== state;
+      const coord = `${colIndexToLetter(command.gridX)}${command.gridY + 1}`;
+      appendPlayerLog(
+        placed
+          ? `Ops: building ${command.tower} at ${coord}.`
+          : `Ops: could not build ${command.tower} at ${coord}. Check gold/cell.`,
+        placed ? 'success' : 'warning',
+      );
       setSnapshot({ ...stateRef.current });
       return;
     }
@@ -270,6 +371,7 @@ export default function App() {
         command.gridX * CELL_SIZE + CELL_SIZE / 2,
         command.gridY * CELL_SIZE + CELL_SIZE / 2,
       );
+      appendPlayerLog(`Ops: hero moving to ${colIndexToLetter(command.gridX)}${command.gridY + 1}.`, 'success');
       setSnapshot({ ...stateRef.current });
       return;
     }
@@ -280,26 +382,106 @@ export default function App() {
         state.hero.x + command.dx * CELL_SIZE,
         state.hero.y + command.dy * CELL_SIZE,
       );
+      appendPlayerLog('Ops: hero repositioning one cell.', 'success');
       setSnapshot({ ...stateRef.current });
       return;
     }
 
     if (command.type === 'startWave') {
+      appendPlayerLog('Ops: starting match.', 'success');
       handleStartMatch();
       return;
     }
 
     if (command.type === 'pause') {
+      appendPlayerLog(state.phase === 'playing' ? 'Ops: pausing match.' : 'Ops: resuming match.', 'info');
       handlePause();
       return;
     }
 
+    if (command.type === 'attack') {
+      const before = stateRef.current;
+      stateRef.current = deployAttackPackage(stateRef.current, command.package);
+      const deployed = stateRef.current !== before;
+      appendPlayerLog(
+        deployed
+          ? `Ops: deploying ${command.package.replace('_', ' ')}.`
+          : `Ops: ${command.package.replace('_', ' ')} not ready yet.`,
+        deployed ? 'success' : 'warning',
+      );
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'upgrade') {
+      const tower = state.towers.find(t =>
+        t.owner === 'player' &&
+        t.gridX === command.gridX &&
+        t.gridY === command.gridY &&
+        (command.tower == null || t.type === command.tower)
+      );
+      if (!tower) {
+        const coord = `${colIndexToLetter(command.gridX)}${command.gridY + 1}`;
+        appendPlayerLog(`Ops: no tower found at ${coord}.`, 'warning');
+        return;
+      }
+      const before = stateRef.current;
+      stateRef.current = upgradeTower(stateRef.current, tower.id);
+      const upgraded = stateRef.current !== before;
+      const coord = `${colIndexToLetter(command.gridX)}${command.gridY + 1}`;
+      appendPlayerLog(
+        upgraded
+          ? `Ops: ${tower.type} at ${coord} levelled up to ${tower.level + 1}.`
+          : `Ops: cannot upgrade ${tower.type} at ${coord}. Check gold or max level.`,
+        upgraded ? 'success' : 'warning',
+      );
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'scroll') {
+      const delta = (command.direction === 'right' ? 1 : -1) * CELL_SIZE * 8 * command.steps;
+      const currentTarget = voiceScrollTargetRef.current ?? stateRef.current.cameraX;
+      voiceScrollTargetRef.current = Math.max(0, Math.min(MAX_CAM_X, currentTarget + delta));
+      return;
+    }
+
+    if (command.type === 'scrollTo') {
+      voiceScrollTargetRef.current = command.edge === 'start' ? 0 : MAX_CAM_X;
+      return;
+    }
+
+    if (command.type === 'scrollOps') {
+      const el = opsScrollRef.current;
+      if (el) {
+        const amount = 80 * command.steps;
+        el.scrollBy({ top: command.direction === 'down' ? amount : -amount, behavior: 'smooth' });
+      }
+      return;
+    }
+
+    if (command.type === 'scrollOpsTo') {
+      const el = opsScrollRef.current;
+      if (el) {
+        el.scrollTo({ top: command.edge === 'top' ? 0 : el.scrollHeight, behavior: 'smooth' });
+      }
+      return;
+    }
+
     if (command.type === 'cancel') {
+      appendPlayerLog('Ops: selection cleared.', 'info');
       handleDeselect();
     }
-  }, [handleDeselect, handlePause, handleStartMatch]);
+  }, [appendPlayerLog, handleDeselect, handlePause, handleStartMatch]);
 
-  const voice = useVoiceController(handleVoiceCommand);
+  const handleVoiceTranscript = useCallback((transcript: string, matchedCommand: boolean) => {
+    appendPlayerLog(`You: "${transcript}"`, 'info');
+    if (!matchedCommand) {
+      appendPlayerLog('Suggestion: try "build cannon at D 6" or "hero move to H 5".', 'warning');
+    }
+  }, [appendPlayerLog]);
+
+  const voice = useVoiceController(handleVoiceCommand, handleVoiceTranscript);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -436,6 +618,8 @@ export default function App() {
               state={snapshot}
               perfStats={perfStats}
               voice={voice}
+              playerBattleLog={playerBattleLog}
+              opponentBattleLog={opponentBattleLog}
               onStartMatch={handleStartMatch}
               onPause={handlePause}
               onSetSpeed={handleSetSpeed}
@@ -508,6 +692,7 @@ export default function App() {
                       onSell={handleSell}
                       onDeselect={handleDeselect}
                       onDeployAttack={handleDeployAttack}
+                      opsScrollRef={opsScrollRef}
                     />
                   </div>
                 </div>
