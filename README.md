@@ -6,6 +6,24 @@ A real-time, voice-controlled tower defense game with PvP multiplayer. Defend yo
 
 ---
 
+## Hackathon Tracks — AI Engineer Singapore 2026
+
+Built for the [AI Engineer Hackathon](https://luma.com/aie-hack?tk=6ESqwa) in Singapore. Targeting the following tracks:
+
+### 🎙️ OpenAI — Best Use of GPT / Voice
+The entire gameplay loop is voice-driven. Whisper (`gpt-4o-transcribe`) captures speech in real time, and `gpt-4o-mini` autocorrects STT mishearings (e.g. "lazer" → "laser", "grant pack" → "grunt pack") into valid game commands. A custom regex parser then maps the corrected text to immediate in-game actions with sub-second latency.
+
+### 🎤 Gemini — Best Voice Agent Track
+Data Center Destroyer is a fully hands-free voice agent — every game action (build, upgrade, move hero, deploy attack, scroll map) can be executed by voice alone. The pipeline — capture → Whisper STT → GPT autocorrect → command parser → game engine — is a complete voice agent architecture embedded in a real-time game.
+
+### ⚡ Convex — Best Use of Convex
+Multiplayer PvP is powered by Convex for real-time room management, host/guest matchmaking, and deterministic lockstep action sync. Both players run the same seeded simulation locally; Convex streams actions between them to keep game state perfectly mirrored with no server-side simulation.
+
+### 🏆 Overall Prize
+A voice-controlled tower defense game with real-time PvP multiplayer — technically deep and immediately demo-able. The voice command system alone sets it apart as a unique human-computer interaction model for gaming.
+
+---
+
 ## Features
 
 - **Voice control** — speak commands to build towers, move your hero, scroll the map, and deploy attacks
