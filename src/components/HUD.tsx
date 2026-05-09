@@ -556,6 +556,7 @@ export function HUD({ state, perfStats, voice, playerBattleLog, opponentBattleLo
   const livesPct = (state.playerBaseHp / state.maxPlayerBaseHp) * 100;
   const livesColor = livesPct > 60 ? '#00ff88' : livesPct > 30 ? '#ffcc00' : '#ff4444';
   const controlsEnabled = state.gameMode !== 'multi_player';
+  const speedControlEnabled = controlsEnabled;
   const fpsTone =
     perfStats.fps >= 55
       ? 'text-cyber-green'
@@ -612,7 +613,7 @@ export function HUD({ state, perfStats, voice, playerBattleLog, opponentBattleLo
       <div className="relative flex min-h-0 min-w-0 max-h-full flex-col items-end justify-center gap-1.5 self-center overflow-visible border-l border-white/[0.07] pl-3">
         {/* Row 1: speed strip + perf button */}
         <div className="flex items-center gap-2">
-          {controlsEnabled ? (
+          {speedControlEnabled ? (
             <div className="flex overflow-hidden rounded-md ring-1 ring-white/10">
               {speedPresetButtons}
             </div>
@@ -654,8 +655,8 @@ export function HUD({ state, perfStats, voice, playerBattleLog, opponentBattleLo
           </div>
         </div>
 
-        {/* Row 2: action button (Start / Pause / Resume) */}
-        {controlsEnabled && showStartMatchBtn ? (
+        {/* Row 2: action button (Start / Pause / Resume) — visible in all modes */}
+        {showStartMatchBtn ? (
           <button
             type="button"
             onClick={onStartMatch}
@@ -668,7 +669,7 @@ export function HUD({ state, perfStats, voice, playerBattleLog, opponentBattleLo
           </button>
         ) : null}
 
-        {controlsEnabled && state.phase === 'playing' ? (
+        {state.phase === 'playing' ? (
           <button
             type="button"
             onClick={onPause}
@@ -679,7 +680,7 @@ export function HUD({ state, perfStats, voice, playerBattleLog, opponentBattleLo
           </button>
         ) : null}
 
-        {controlsEnabled && state.phase === 'paused' ? (
+        {state.phase === 'paused' ? (
           <button
             type="button"
             onClick={onPause}
