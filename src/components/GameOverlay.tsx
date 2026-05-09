@@ -183,7 +183,7 @@ function MenuScreen({
   );
 }
 
-const VERSUS_MAIN_MS = 6200;
+const VERSUS_MAIN_MS = 3100;
 const VERSUS_EXIT_MS = 780;
 
 function fakeLoadPercent(elapsedMs: number, mainMs: number): number {

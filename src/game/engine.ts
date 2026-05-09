@@ -179,12 +179,22 @@ export function placeTower(state: GameState, gridX: number, gridY: number, type:
   newGrid[gridY][gridX] = 'tower';
 
   const tower = createTower(type, gridX, gridY, 'player');
+  const spawnEffect: VisualEffect = {
+    id: uid(),
+    type: 'tower_spawn',
+    x: tower.x,
+    y: tower.y,
+    color: def.accentColor,
+    life: 0.7,
+    maxLife: 0.7,
+  };
 
   return {
     ...state,
     gold: state.gold - def.cost,
     towers: [...state.towers, tower],
     grid: newGrid,
+    effects: [...state.effects, spawnEffect],
     selectedTowerType: null,
   };
 }
@@ -1353,6 +1363,33 @@ function tickProjectiles(state: GameState, dt: number): GameState {
         grid[tower.gridY][tower.gridX] = 'empty';
         if (hit.towerId === hero.id) hero = { ...hero, kills: hero.kills + 1 };
         else if (hit.towerId === opponentHero.id) opponentHero = { ...opponentHero, kills: opponentHero.kills + 1 };
+        // Tower death explosion effect
+        const towerDef = TOWER_DEFS[tower.type];
+        newEffects.push({
+          id: uid(),
+          type: 'tower_death',
+          x: tower.x,
+          y: tower.y,
+          color: towerDef.accentColor,
+          life: 0.8,
+          maxLife: 0.8,
+        });
+        // Extra death particles burst
+        for (let i = 0; i < 18; i++) {
+          const angle = (Math.PI * 2 * i) / 18 + Math.random() * 0.3;
+          const spd = 60 + Math.random() * 160;
+          newParticles.push({
+            id: uid(),
+            x: tower.x,
+            y: tower.y,
+            vx: Math.cos(angle) * spd,
+            vy: Math.sin(angle) * spd,
+            life: 0.5 + Math.random() * 0.5,
+            maxLife: 0.5 + Math.random() * 0.5,
+            color: towerDef.accentColor,
+            size: 2 + Math.random() * 3,
+          });
+        }
       }
       continue;
     }

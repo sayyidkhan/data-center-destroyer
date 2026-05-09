@@ -1,7 +1,7 @@
 {
   "schema": "data-center-destroyer/game-data-bundle",
   "version": "single-player-v1",
-  "contentHash": "fd4a9ea81daa95a4c763f34a7012f034713d6444134a6f50a5602f85cf90622c",
+  "contentHash": "5d2807d4281ee6fb0a57937113701e69e8bccd872bc3f1dc7aceca643629c38d",
   "sources": {
     "map": "map.json",
     "economy": "economy.json",
@@ -170,7 +170,7 @@
       ]
     },
     "economy": {
-      "startingGold": 200,
+      "startingGold": 300,
       "startingLives": 20,
       "startingOffenseResource": 60,
       "maxOffenseResource": 250,

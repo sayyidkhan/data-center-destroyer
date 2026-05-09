@@ -122,6 +122,24 @@ export type VisualEffect =
       points: Vec2[];
       life: number;
       maxLife: number;
+    }
+  | {
+      id: string;
+      type: 'tower_spawn';
+      x: number;
+      y: number;
+      color: string;
+      life: number;
+      maxLife: number;
+    }
+  | {
+      id: string;
+      type: 'tower_death';
+      x: number;
+      y: number;
+      color: string;
+      life: number;
+      maxLife: number;
     };
 
 export interface GameState {

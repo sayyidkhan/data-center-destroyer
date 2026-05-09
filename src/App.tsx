@@ -152,7 +152,7 @@ export default function App() {
   useEffect(() => {
     let raf = 0;
     let last = 0;
-    const VOICE_SCROLL_SPEED = 600; // px/s for voice-initiated scroll
+    const VOICE_SCROLL_SPEED = 1800; // px/s for voice-initiated scroll
     const tick = (t: number) => {
       const dt = last ? Math.min((t - last) / 1000, 0.05) : 0;
       last = t;
