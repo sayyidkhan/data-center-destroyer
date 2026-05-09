@@ -21,8 +21,19 @@ export function MultiplayerLobby({ onBack, onJoined, onReady, playerId }: Multip
   const acceptGuest = useMutation(api.rooms.acceptGuest as any);
   const rejectGuest = useMutation(api.rooms.rejectGuest as any);
   const leaveRoom = useMutation(api.rooms.leaveRoom as any);
+  const heartbeat = useMutation(api.rooms.heartbeat as any);
 
   const publicLobbies = useQuery(api.rooms.listPublicLobbies as any);
+
+  // Keep the lobby alive while host is waiting — fire heartbeat every 5s
+  useEffect(() => {
+    if ((stage !== 'host_waiting' && stage !== 'host_accept') || !roomIdRef.current) return;
+    const roomId = roomIdRef.current;
+    const interval = setInterval(() => {
+      heartbeat({ roomId, playerId }).catch(() => undefined);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [stage, playerId, heartbeat]);
 
   const currentRoomId = roomIdRef.current;
   const room = useQuery(
