@@ -13,7 +13,7 @@ function generateRoomCode(): string {
   return code;
 }
 
-export const createRoom = mutation({
+export const createPublicLobby = mutation({
   args: { hostId: v.string() },
   handler: async (ctx, args) => {
     let code = generateRoomCode();
@@ -44,32 +44,84 @@ export const createRoom = mutation({
       actions: [],
       winner: undefined,
       roomSeed,
+      isPublic: true,
+      joinRequests: [],
     });
 
     return { roomId, code, roomSeed };
   },
 });
 
-export const joinRoom = mutation({
-  args: { code: v.string(), guestId: v.string() },
+export const requestJoin = mutation({
+  args: { roomId: v.id("rooms"), guestId: v.string() },
   handler: async (ctx, args) => {
-    const room = await ctx.db
-      .query("rooms")
-      .withIndex("by_code", (q) => q.eq("code", args.code))
-      .first();
-
+    const room = await ctx.db.get(args.roomId);
     if (!room) throw new Error("Room not found");
-    if (room.status !== "waiting") throw new Error("Room is not available");
+    if (!room.isPublic) throw new Error("Room is not public");
     if (room.guestId) throw new Error("Room is full");
+    if (room.status !== "waiting") throw new Error("Room is not available");
     if (room.hostId === args.guestId) throw new Error("Cannot join your own room");
+    const requests = room.joinRequests ?? [];
+    if (requests.includes(args.guestId)) throw new Error("Already requested");
 
-    await ctx.db.patch(room._id, {
-      guestId: args.guestId,
-      status: "ready",
-      guestLastSeen: Date.now(),
+    await ctx.db.patch(args.roomId, {
+      joinRequests: [...requests, args.guestId],
     });
 
-    return { roomId: room._id, roomSeed: room.roomSeed };
+    return true;
+  },
+});
+
+export const acceptGuest = mutation({
+  args: { roomId: v.id("rooms"), hostId: v.string(), guestId: v.string() },
+  handler: async (ctx, args) => {
+    const room = await ctx.db.get(args.roomId);
+    if (!room) throw new Error("Room not found");
+    if (room.hostId !== args.hostId) throw new Error("Only host can accept");
+    if (room.guestId) throw new Error("Room is already full");
+    const requests = room.joinRequests ?? [];
+    if (!requests.includes(args.guestId)) throw new Error("No join request from this player");
+
+    await ctx.db.patch(args.roomId, {
+      guestId: args.guestId,
+      status: "ready",
+      joinRequests: requests.filter((id) => id !== args.guestId),
+    });
+
+    return true;
+  },
+});
+
+export const rejectGuest = mutation({
+  args: { roomId: v.id("rooms"), hostId: v.string(), guestId: v.string() },
+  handler: async (ctx, args) => {
+    const room = await ctx.db.get(args.roomId);
+    if (!room) throw new Error("Room not found");
+    if (room.hostId !== args.hostId) throw new Error("Only host can reject");
+
+    const requests = room.joinRequests ?? [];
+    await ctx.db.patch(args.roomId, {
+      joinRequests: requests.filter((id) => id !== args.guestId),
+    });
+
+    return true;
+  },
+});
+
+export const listPublicLobbies = query({
+  args: {},
+  handler: async (ctx) => {
+    const allRooms = await ctx.db
+      .query("rooms")
+      .collect();
+
+    return allRooms
+      .filter((room) => room.isPublic === true && room.status === "waiting" && !room.guestId && room.hostLastSeen > Date.now() - HEARTBEAT_TIMEOUT_MS)
+      .map((room) => ({
+        roomId: room._id,
+        code: room.code,
+        hostId: room.hostId,
+      }));
   },
 });
 
@@ -92,7 +144,6 @@ export const setReady = mutation({
     const updated = await ctx.db.get(args.roomId);
     if (!updated) throw new Error("Room vanished");
 
-    // Both ready -> start countdown
     if (updated.hostReady && updated.guestReady && updated.status === "ready") {
       await ctx.db.patch(args.roomId, {
         status: "playing",
@@ -226,9 +277,7 @@ export const cleanupStaleRooms = mutation({
     const now = Date.now();
     const stale = await ctx.db
       .query("rooms")
-      .withIndex("by_status", (q) =>
-        q.eq("status", "waiting")
-      )
+      .withIndex("by_status", (q) => q.eq("status", "waiting"))
       .collect();
 
     for (const room of stale) {

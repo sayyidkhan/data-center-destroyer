@@ -12,9 +12,6 @@ interface GameOverlayProps {
   onRestart: () => void;
   onResume: () => void;
   onMultiplayerStart?: () => void;
-  room?: any;
-  playerRole?: 'host' | 'guest' | null;
-  onReady?: () => void;
 }
 
 export function GameOverlay({
@@ -27,9 +24,6 @@ export function GameOverlay({
   onRestart,
   onResume,
   onMultiplayerStart,
-  room,
-  playerRole,
-  onReady,
 }: GameOverlayProps) {
   if (state.phase === 'playing' || state.phase === 'wave_complete') return null;
 
@@ -47,9 +41,6 @@ export function GameOverlay({
             onBackToLaunch={onBackToLaunch}
             onStart={onStart}
             onMultiplayerStart={onMultiplayerStart}
-            room={room}
-            playerRole={playerRole}
-            onReady={onReady}
           />
         </div>
       )}
@@ -75,18 +66,12 @@ function MenuScreen({
   onBackToLaunch,
   onStart,
   onMultiplayerStart,
-  room,
-  playerRole,
-  onReady,
 }: {
   stage: 'launch' | 'pick_mode' | 'mp_lobby';
   onContinueToModeSelect: () => void;
   onBackToLaunch: () => void;
   onStart: () => void;
   onMultiplayerStart?: () => void;
-  room?: any;
-  playerRole?: 'host' | 'guest' | null;
-  onReady?: () => void;
 }) {
   return (
     <div
@@ -200,49 +185,7 @@ function MenuScreen({
           </>
         )}
 
-        {stage === 'mp_lobby' && room && playerRole && (
-          <div className="flex w-full flex-col items-center gap-5">
-            <p
-              className="font-mono text-sm font-black uppercase tracking-[0.22em] text-fuchsia-300/80 sm:text-base"
-              style={{ fontFamily: 'Orbitron, sans-serif' }}
-            >
-              Match Room
-            </p>
-            <div className="flex flex-col items-center gap-2">
-              <span className="font-mono text-xs uppercase tracking-widest text-white/40">Room Code</span>
-              <span className="rounded-xl border border-fuchsia-400/25 bg-fuchsia-400/10 px-6 py-2 font-mono text-2xl font-black tracking-[0.15em] text-fuchsia-300">
-                {room.code}
-              </span>
-            </div>
-            <div className="flex items-center gap-4 font-mono text-sm text-white/60">
-              <span className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-cyber-green" />
-                Host
-              </span>
-              <span className="text-white/20">vs</span>
-              <span className="flex items-center gap-2">
-                <span className={`h-2 w-2 rounded-full ${room.guestId ? 'bg-cyber-green' : 'bg-white/20'}`} />
-                Guest
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={onReady}
-              disabled={room.hostReady && playerRole === 'host' || room.guestReady && playerRole === 'guest'}
-              className="group relative overflow-hidden rounded-2xl border border-cyber-green/45 bg-cyber-green/[0.12] px-12 py-4 font-mono text-lg font-black uppercase tracking-[0.15em] text-cyber-green transition-all hover:scale-[1.02] hover:bg-cyber-green/[0.18] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{ boxShadow: '0 0 30px rgba(0,255,136,0.18)' }}
-            >
-              {room.hostReady && playerRole === 'host' ? 'Waiting...' : room.guestReady && playerRole === 'guest' ? 'Waiting...' : 'Ready'}
-            </button>
-            <button
-              type="button"
-              onClick={onBackToLaunch}
-              className="rounded-xl bg-dark-800/90 px-6 py-2.5 font-mono text-sm font-bold uppercase tracking-[0.18em] text-white/55 transition-all hover:bg-dark-700/95 hover:text-red-300"
-            >
-              Leave Room
-            </button>
-          </div>
-        )}
+
       </div>
     </div>
   );

@@ -28,7 +28,10 @@ export default defineSchema({
     ),
     winner: v.optional(v.union(v.literal("host"), v.literal("guest"))),
     roomSeed: v.number(),
+    isPublic: v.optional(v.boolean()),
+    joinRequests: v.optional(v.array(v.string())), // guestIds requesting to join
   })
     .index("by_code", ["code"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_public", ["isPublic", "status"]),
 });

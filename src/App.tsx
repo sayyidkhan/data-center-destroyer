@@ -586,9 +586,6 @@ export default function App() {
                 onRestart={handleRestart}
                 onResume={handlePause}
                 onMultiplayerStart={handleMultiplayerStart}
-                room={room}
-                playerRole={playerRole}
-                onReady={handleReady}
               />
               {snapshot.phase === 'countdown' && (
                 <CountdownOverlay
