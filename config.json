@@ -1,5 +1,5 @@
 {
   "openai": {
-    "sttModel": "gpt-4o-mini-transcribe"
+    "sttModel": "gpt-4o-transcribe"
   }
 }

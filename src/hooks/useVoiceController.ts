@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+export type VoicePhase = 'idle' | 'listening' | 'hearing' | 'processing' | 'done';
 import type { TowerType } from '../game/types';
 import sttConfig from '../../config.json';
 
@@ -38,11 +39,26 @@ type SttConfig = {
   };
 };
 
-const OPENAI_SILENCE_MS = 1400;
-const OPENAI_MIN_RECORDING_MS = 900;
-const OPENAI_MAX_RECORDING_MS = 10000;
-const OPENAI_MIN_VOICE_THRESHOLD = 0.012;
-const OPENAI_NOISE_MULTIPLIER = 2.4;
+const OPENAI_SILENCE_MS = 700;          // cut after 700ms silence — shorter = snappier response
+const OPENAI_MIN_RECORDING_MS = 400;    // minimum clip before processing
+const OPENAI_MAX_RECORDING_MS = 8000;   // max clip length
+const OPENAI_MIN_VOICE_THRESHOLD = 0.018; // lower floor — catches quieter speakers
+const OPENAI_NOISE_MULTIPLIER = 2.5;    // threshold = noiseFloor × this — reduced to avoid missing speech
+
+// Game keywords that must appear for a transcript to be acted on
+const GAME_KEYWORDS = /\b(?:build|place|add|put|set|drop|create|make|spawn|install|deploy|send|launch|use|activate|release|dispatch|cannon|laser|frost|tesla|missile|hero|mech|scroll|pan|grunt|speeder|tank|swarm|boss|start|pause|cancel|upgrade|level\s*up|move|left|right|up|down|ops?|pop|attack|pack|rush|push|burst|signal)\b/i;
+
+/** Returns true if the transcript looks like Whisper hallucination or background noise */
+function isHallucination(transcript: string): boolean {
+  const t = transcript.trim();
+  if (!t) return true;
+  // Common Whisper silence hallucinations — exact short filler phrases
+  const fillers = /^(?:you|uh|um|hmm|hm|ah|oh|thank you|thanks|bye|goodbye|okay|ok|sure|yeah|yes|no|yep|nope|hi|hey|hello)\.?$/i;
+  if (fillers.test(t)) return true;
+  // Must contain at least one game-relevant keyword
+  if (!GAME_KEYWORDS.test(t)) return true;
+  return false;
+}
 
 /** Convert a column letter (A, B, … Z, AA, AB…) to a 0-based index. */
 export function colLetterToIndex(letter: string): number {
@@ -67,28 +83,47 @@ export function colIndexToLetter(index: number): string {
 }
 
 // Canonical tower name lookup — includes common STT mishearings
+// IMPORTANT: only include words that are unlikely to appear in everyday speech
+// to avoid false-positive command triggers.
 const TOWER_WORDS: Record<string, TowerType> = {
+  // cannon variants
   cannon: 'cannon',
   canon: 'cannon',
-  can: 'cannon',
   canyon: 'cannon',
   kenya: 'cannon',
   'can on': 'cannon',
+  canning: 'cannon',
+  ganon: 'cannon',
+  // laser variants
   laser: 'laser',
   lazer: 'laser',
   blazer: 'laser',
   razer: 'laser',
+  lazar: 'laser',
+  lasers: 'laser',
+  gazer: 'laser',
+  'lay zer': 'laser',
+  'lay ser': 'laser',
+  fraser: 'laser',
+  glazer: 'laser',
+  // frost variants
   frost: 'frost',
   frosty: 'frost',
-  lost: 'frost',
-  first: 'frost',
+  // "lost", "first", "trust", "crossed" removed — too common, cause false positives
+  // tesla variants
   tesla: 'tesla',
   testa: 'tesla',
   vessel: 'tesla',
+  tesco: 'tesla',
+  texla: 'tesla',
+  // missile variants
   missile: 'missile',
   missal: 'missile',
   missel: 'missile',
   mistle: 'missile',
+  missle: 'missile',
+  mizzle: 'missile',
+  // "mist" removed — too common an English word, causes false positives
 };
 
 // Resolve an STT-produced word to a TowerType using exact match then fuzzy
@@ -134,22 +169,22 @@ function parseNumber(value: string): number {
 function parseVoiceCommand(text: string): VoiceCommand | null {
   const phrase = text.toLowerCase().trim().replace(/[.,!?]/g, '');
 
-  // ── Column: a single letter spoken aloud — must be followed by a space or digit ─
+  // ── Column: a single letter spoken aloud — must be followed by a space, digit, comma, dash or end ─
   // Use a lookahead so the greedy [a-z]{1,2} doesn't swallow extra letters.
-  const colLetter = '([a-z])(?=\\s|\\d|$)';
+  const colLetter = '([a-z])(?=\\s|\\d|[,\\-]|$)';
 
   // ── Row: a number word or digit string ─────────────────────────────────
   const rowWord = 'zero|oh|o|one|won|wan|once|two|too|to|tu|twice|three|tree|free|through|four|for|fore|forth|fourth|five|fife|fav|six|sex|sikh|seven|eight|ate|ait|nine|nein|nigh|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty';
   const rowCoord = `(\\d+|${rowWord})`;
 
-  // Separator between column letter and row number — space/comma/dash, or nothing (e.g. "s14")
-  const sep = '[\\s,\\-]*';
+  // Separator between column letter and row number — space/comma/dash/dot, or nothing (e.g. "s14", "s.14")
+  const sep = '[\\s,\\.\\-]*';
 
   // ── BUILD command ──────────────────────────────────────────────────────
   const buildVerb = '(?:build|place|add|put|set|drop|create|make|spawn|install)';
   // Optional preposition between tower name and coordinates
   const atPhrase = '(?:at|on|in|to|row|position|grid|coordinate|coords?|column|col)';
-  const knownTowers = 'cannon|canon|laser|lazer|frost|tesla|missile|missal|missel|can|canyon|kenya|blazer|razer|frosty|testa|vessel|mistle';
+  const knownTowers = 'cannon|canon|laser|lazer|lazar|blazer|razer|fraser|glazer|gazer|frost|frosty|tesla|testa|vessel|tesco|texla|missile|missal|missel|mistle|missle|mizzle|canyon|kenya|canning|ganon';
 
   // Helper: try to extract gridX/gridY from a colLetter + rowCoord match pair
   const toCoords = (col: string, row: string): { gridX: number; gridY: number } | null => {
@@ -172,9 +207,9 @@ function parseVoiceCommand(text: string): VoiceCommand | null {
   }
 
   // Pattern B: loose 1-word tower (fuzzy), optional prep, then letter + number
-  // Captured tower word must NOT be a known prep or coord letter
+  // Require the captured word is ≥3 chars so single-letter prepositions (a, i) don't match as tower names
   const buildLoose = new RegExp(
-    `${buildVerb}\\s+([a-z]+)\\s+(?:${atPhrase}\\s+)?${colLetter}${sep}${rowCoord}`
+    `${buildVerb}\\s+([a-z]{3,})\\s+(?:${atPhrase}\\s+)?${colLetter}${sep}${rowCoord}`
   );
   const buildLooseMatch = phrase.match(buildLoose);
   if (buildLooseMatch) {
@@ -239,24 +274,43 @@ function parseVoiceCommand(text: string): VoiceCommand | null {
   }
 
   // ── ATTACK PACKAGES ────────────────────────────────────────────────────
-  const deployVerb = '(?:deploy|send|launch|attack\\s+with|use|activate|release|dispatch)';
-  if (/\b(?:grunt|grunts?|grunt\s*pack|basic\s*attack|foot\s*soldiers?)\b/.test(phrase) && new RegExp(deployVerb).test(phrase))
-    return { type: 'attack', package: 'grunt_pack' };
-  if (/\b(?:speeder|speeders?|speeder\s*rush|speed\s*rush|fast\s*attack|runners?)\b/.test(phrase) && new RegExp(deployVerb).test(phrase))
-    return { type: 'attack', package: 'speeder_rush' };
-  if (/\b(?:tank|tanks?|tank\s*push|heavy\s*attack|armor(?:ed)?)\b/.test(phrase) && new RegExp(deployVerb).test(phrase))
-    return { type: 'attack', package: 'tank_push' };
-  if (/\b(?:swarm|swarms?|swarm\s*burst|bug\s*swarm|swarm\s*attack|bugs?)\b/.test(phrase) && new RegExp(deployVerb).test(phrase))
-    return { type: 'attack', package: 'swarm_burst' };
-  if (/\b(?:boss|boss\s*signal|big\s*guy|boss\s*attack|mega|titan)\b/.test(phrase) && new RegExp(deployVerb).test(phrase))
-    return { type: 'attack', package: 'boss_signal' };
+  // Deploy verb — intentionally narrow to avoid conflicts with scroll/hero/build verbs.
+  // "send" excluded here because "send wave" → startWave must take priority (handled later).
+  // "use" excluded — too generic. "launch" excluded — "launch wave" → startWave.
+  const deployVerb = '(?:deploy|the\\s*ploy|eploy|imploy|de\\s*ploy|activate|release|dispatch|execute|trigger|initiate|attack\\s+with)';
+  const hasDeployVerb = new RegExp(deployVerb).test(phrase);
 
-  // Also match shorthand like "grunt pack", "speeder rush" etc. without an explicit verb
-  if (/\b(?:grunt\s*pack)\b/.test(phrase)) return { type: 'attack', package: 'grunt_pack' };
-  if (/\b(?:speeder\s*rush)\b/.test(phrase)) return { type: 'attack', package: 'speeder_rush' };
-  if (/\b(?:tank\s*push)\b/.test(phrase)) return { type: 'attack', package: 'tank_push' };
-  if (/\b(?:swarm\s*burst)\b/.test(phrase)) return { type: 'attack', package: 'swarm_burst' };
-  if (/\b(?:boss\s*signal)\b/.test(phrase)) return { type: 'attack', package: 'boss_signal' };
+  // Grunt pack — "grant pack", "prints pack" are common mishearings of "grunt pack"
+  // "ground" removed — triggers on "hero go to ground level"
+  const isGrunt = /\b(?:grunt|grunts?|grant|prints?)\b/.test(phrase);
+  const isGruntPack = /\b(?:grunt\s*pack|grant\s*pack|prints?\s*pack)\b/.test(phrase);
+  if (isGruntPack || (isGrunt && hasDeployVerb) || /\b(?:basic\s*attack|foot\s*soldiers?)\b/.test(phrase))
+    return { type: 'attack', package: 'grunt_pack' };
+
+  // Speeder rush — "spider rush", "speedster rush" are common mishearings
+  // "speed" alone removed — triggers on "scroll speed" / "move speed"
+  const isSpeeder = /\b(?:speeder|speeders?|spider|speedster)\b/.test(phrase);
+  const isSpeederRush = /\b(?:speeder\s*rush|spider\s*rush|speed\s*rush|speedster\s*rush)\b/.test(phrase);
+  if (isSpeederRush || (isSpeeder && hasDeployVerb) || /\b(?:fast\s*attack|runners?)\b/.test(phrase))
+    return { type: 'attack', package: 'speeder_rush' };
+
+  // Tank push
+  const isTank = /\b(?:tank|tanks?)\b/.test(phrase);
+  const isTankPush = /\b(?:tank\s*push)\b/.test(phrase);
+  if (isTankPush || (isTank && hasDeployVerb) || /\b(?:heavy\s*attack|armou?red?\s*attack)\b/.test(phrase))
+    return { type: 'attack', package: 'tank_push' };
+
+  // Swarm burst — "storm" removed as alias: "start wave" could be heard as "storm wave"
+  const isSwarm = /\b(?:swarm|swarms?)\b/.test(phrase);
+  const isSwarmBurst = /\b(?:swarm\s*burst)\b/.test(phrase);
+  if (isSwarmBurst || (isSwarm && hasDeployVerb) || /\b(?:bug\s*swarm|swarm\s*attack)\b/.test(phrase))
+    return { type: 'attack', package: 'swarm_burst' };
+
+  // Boss signal
+  const isBoss = /\b(?:boss|mega|titan)\b/.test(phrase);
+  const isBossSignal = /\b(?:boss\s*signal)\b/.test(phrase);
+  if (isBossSignal || (isBoss && hasDeployVerb) || /\b(?:big\s*guy|boss\s*attack)\b/.test(phrase))
+    return { type: 'attack', package: 'boss_signal' };
 
   // ── SCROLL ─────────────────────────────────────────────────────────────
   // Multiplier: "x 5", "x5", "times 5", "by 5", or spoken word "five"
@@ -284,23 +338,27 @@ function parseVoiceCommand(text: string): VoiceCommand | null {
   // Matches many natural phrasings:
   //   "attack ops screen scroll down", "ops scroll up x 2", "scroll ops up",
   //   "ops down", "attack ops, scroll down", "ops panel scroll up"
-  const opsKeyword = '\\b(?:attack\\s+)?ops?(?:\\s+(?:screen|panel|list|menu|section|window))?';
-  const opsPhrase = `(?:${opsKeyword}[\\s,]+(?:scroll\\s+)?|(?:scroll\\s+)${opsKeyword}[\\s,]+)`;
-  const opsScrollUp   = new RegExp(opsPhrase + '(?:up|north)' + stepsCapture);
-  const opsScrollDown = new RegExp(opsPhrase + '(?:down|south)' + stepsCapture);
-  const opsUpMatch   = phrase.match(opsScrollUp);
-  if (opsUpMatch)   return { type: 'scrollOps', direction: 'up',   steps: parseNumber(opsUpMatch[1]   ?? '1') || 1 };
-  const opsDownMatch = phrase.match(opsScrollDown);
-  if (opsDownMatch) return { type: 'scrollOps', direction: 'down', steps: parseNumber(opsDownMatch[1] ?? '1') || 1 };
+  // ── ATTACK OPS SCROLL ──────────────────────────────────────────────────
+  // Two-pass: (1) does phrase mention the ops panel? (2) what direction?
+  // Whisper mishearings of "ops": up, op, pop, ox, ups, oops, OP, "up screen"
+  const hasOpsRef = /\b(?:attack\s+)?(?:ops?|pop|ox|ups?|oops)\b/i.test(phrase)
+    || /\b(?:attack|op)\s+(?:screen|panel|list|menu|section|window)\b/i.test(phrase);
 
-  // Ops scroll to top/bottom edge
-  // "ops scroll to top", "attack ops go to bottom", "ops to the top" etc.
-  const opsEdge = `${opsKeyword}[\\s,]+(?:(?:scroll|go|jump)\\s+to\\s+(?:the\\s+)?)?`;
-  if (new RegExp(opsEdge + '(?:top|start|beginning)').test(phrase)) return { type: 'scrollOpsTo', edge: 'top' };
-  if (new RegExp(opsEdge + '(?:bottom|end|finish)').test(phrase))   return { type: 'scrollOpsTo', edge: 'bottom' };
-  // Also: "scroll to top of ops", "scroll to bottom of attack ops"
-  if (/\b(?:scroll|go|jump)\s+to\s+(?:the\s+)?top\s+of\s+(?:attack\s+)?ops?\b/.test(phrase))    return { type: 'scrollOpsTo', edge: 'top' };
-  if (/\b(?:scroll|go|jump)\s+to\s+(?:the\s+)?bottom\s+of\s+(?:attack\s+)?ops?\b/.test(phrase)) return { type: 'scrollOpsTo', edge: 'bottom' };
+  if (hasOpsRef) {
+    const hasDown = /\b(?:down|south|slow\s*down)\b/i.test(phrase);
+    const hasUp   = /\b(?:up|north)\b/i.test(phrase)
+      && !/\b(?:level\s*up|power\s*up|upgrade)\b/i.test(phrase); // exclude upgrade commands
+    const hasTop    = /\b(?:top|beginning)\b/i.test(phrase);
+    const hasBottom = /\b(?:bottom|end|finish)\b/i.test(phrase);
+
+    const stepsMatch = phrase.match(/(?:x|times|by|\*)\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i);
+    const steps = stepsMatch ? parseNumber(stepsMatch[1]) || 1 : 1;
+
+    if (hasBottom) return { type: 'scrollOpsTo', edge: 'bottom' };
+    if (hasTop)    return { type: 'scrollOpsTo', edge: 'top' };
+    if (hasDown)   return { type: 'scrollOps', direction: 'down', steps };
+    if (hasUp)     return { type: 'scrollOps', direction: 'up',   steps };
+  }
 
   // ── GLOBAL COMMANDS ────────────────────────────────────────────────────
   if (/\b(?:start\s+(?:wave|match|game|round)|launch\s+wave|begin\s+wave|send\s+wave)\b/.test(phrase)) return { type: 'startWave' };
@@ -322,6 +380,8 @@ export function useVoiceController(
   const [liveTranscript, setLiveTranscript] = useState('');
   const [lastTranscript, setLastTranscript] = useState('');
   const [lastError, setLastError] = useState<string | null>(null);
+  const [audioLevel, setAudioLevel] = useState(0); // 0..1 RMS level
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -361,6 +421,9 @@ export function useVoiceController(
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
+    // Track which interim text we already fired a command for, to avoid double-firing
+    let lastFiredInterim = '';
+
     recognition.onresult = (event) => {
       let interimTranscript = '';
       let finalTranscript = '';
@@ -374,11 +437,35 @@ export function useVoiceController(
       }
 
       const visibleTranscript = (interimTranscript || finalTranscript).trim();
-      if (visibleTranscript) setLiveTranscript(visibleTranscript);
+      if (visibleTranscript) {
+        setLiveTranscript(visibleTranscript);
+        setVoicePhase(interimTranscript ? 'hearing' : 'processing');
+      }
       setLastError(null);
+
+      // Early-fire: if an interim result is already a complete command, act now
+      // without waiting for isFinal — this removes ~300-600ms of perceived latency
+      if (interimTranscript && interimTranscript !== lastFiredInterim) {
+        const interimCommand = parseVoiceCommand(interimTranscript.trim());
+        if (interimCommand) {
+          lastFiredInterim = interimTranscript;
+          setLastTranscript(interimTranscript.trim());
+          setLiveTranscript('');
+          onFinalTranscriptRef.current?.(interimTranscript.trim(), true);
+          onCommandRef.current(interimCommand, interimTranscript.trim());
+          return;
+        }
+      }
 
       const completeTranscript = finalTranscript.trim();
       if (!completeTranscript) return;
+
+      // Skip if we already fired this text as interim
+      if (completeTranscript === lastFiredInterim.trim()) {
+        lastFiredInterim = '';
+        return;
+      }
+      lastFiredInterim = '';
 
       setLastTranscript(completeTranscript);
       setLiveTranscript('');
@@ -395,6 +482,8 @@ export function useVoiceController(
     recognition.onend = () => {
       setLiveTranscript('');
       setIsListening(false);
+      setVoicePhase('idle');
+      setAudioLevel(0);
     };
 
     recognitionRef.current = recognition;
@@ -404,39 +493,103 @@ export function useVoiceController(
   const handleFinalTranscript = useCallback((completeTranscript: string) => {
     setLastTranscript(completeTranscript);
     setLiveTranscript('');
+    setVoicePhase('done');
+    setAudioLevel(0);
 
     const command = parseVoiceCommand(completeTranscript);
     onFinalTranscriptRef.current?.(completeTranscript, !!command);
     if (command) onCommandRef.current(command, completeTranscript);
+
+    // Return to listening phase after brief "done" flash
+    setTimeout(() => setVoicePhase(p => p === 'done' ? 'listening' : p), 600);
   }, []);
+
+  /** Pass raw Whisper text through GPT to autocorrect into a valid game command. */
+  const autocorrectTranscript = useCallback(async (raw: string): Promise<string> => {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${openAiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0,
+        max_tokens: 60,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'You are a voice-command corrector for a tower-defense game.',
+              'The player speaks commands and speech-to-text may mishear words.',
+              'Correct the raw transcript into the closest valid game command. Reply with ONLY the corrected command text, nothing else.',
+              '',
+              'Valid commands (output EXACTLY in this format, no brackets, no punctuation):',
+              'build cannon at D 6',
+              'build laser at H 3',
+              'build frost at Q 11',
+              'build tesla at G 4',
+              'build missile at C 9',
+              'hero up',
+              'hero down',
+              'hero left',
+              'hero right',
+              'hero move to H 5',
+              'scroll right',
+              'scroll right x 5',
+              'scroll left x 3',
+              'ops scroll down',
+              'ops scroll down x 2',
+              'ops scroll up',
+              'ops scroll to bottom',
+              'ops scroll to top',
+              'upgrade D 6',
+              'start wave',
+              'pause',
+              'cancel',
+              'deploy grunt pack',
+              'deploy speeder rush',
+              'deploy tank push',
+              'deploy swarm burst',
+              'deploy boss signal',
+              '',
+              'Rules:',
+              '- Output ONLY the corrected command. No brackets, no quotes, no explanation.',
+              '- Grid column is a letter (A-Z), row is a number 1-14. Always separate with a space: D 6 not D6.',
+              '- Multiplier is written as: x 5 (space between x and number, no brackets).',
+              '- Tower mishearings: "canyon/canning/ganon" → "cannon", "lazer/blazer/lazar/razer/fraser/glazer/gazer" → "laser", "frosty" → "frost", "testa/vessel/tesco/texla" → "tesla", "missal/missel/mistle/missle/mizzle" → "missile".',
+              '- Attack mishearings: "grant pack/prints pack" → "deploy grunt pack", "spider rush/speedster rush/speed rush" → "deploy speeder rush", "storm burst/bug swarm" → "deploy swarm burst", "big guy" → "deploy boss signal".',
+              '- Other mishearings: "start mitch/start match" → "start wave", "send wave/launch wave" → "start wave", "op/pop/ox/up screen" → "ops scroll", "slow down" → "scroll down".',
+              '- If the input is silence, noise, or cannot map to any command, reply exactly: NONE',
+            ].join('\n'),
+          },
+          { role: 'user', content: raw },
+        ],
+      }),
+    });
+
+    if (!response.ok) return raw; // fall back to raw if autocorrect fails
+    const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+    const corrected = (data.choices?.[0]?.message?.content ?? '').trim();
+    if (!corrected || corrected === 'NONE') return '';
+    // Strip any brackets/quotes GPT might still add despite instructions
+    return corrected.replace(/[\[\]()"""'']/g, '').trim();
+  }, [openAiApiKey]);
 
   const transcribeWithOpenAi = useCallback(async (audioBlob: Blob) => {
     if (!openAiApiKey) return;
 
-    setLiveTranscript('Transcribing with OpenAI...');
     setLastError(null);
 
     const form = new FormData();
     form.append('model', openAiSttModel);
     form.append('response_format', 'json');
-    form.append('prompt', [
-      'Tower defense game voice commands. Grid uses Excel-style coordinates: a column letter (A, B, C…) followed by a row number.',
-      'Five tower types (spell exactly): cannon, laser, frost, tesla, missile.',
-      'Build examples: "build cannon at D 6", "place laser at H 3", "put frost at Q 11", "add tesla at G 4", "build missile at C 9".',
-      'Hero movement: "hero move to H 5", "hero up", "hero down", "hero left", "hero right".',
-      'Camera: "scroll right", "scroll left", "pan right", "pan left".',
-      'Attack: "grunt pack", "speeder rush", "tank push", "swarm burst", "boss signal".',
-      'Other: "start wave", "pause", "cancel".',
-      'IMPORTANT: always transcribe the column as a single letter and the row as a separate number (e.g. "Q 11" not "Q11" or "17 11").',
-      'IMPORTANT: "frost" not "loss" or "first". "tesla" not "testa". "missile" not "missal". "cannon" not "canon".',
-    ].join(' '));
+    // No prompt — Whisper hallucinates prompt text from silence, so we omit it entirely
     form.append('file', audioBlob, 'voice-command.webm');
 
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${openAiApiKey}`,
-      },
+      headers: { Authorization: `Bearer ${openAiApiKey}` },
       body: form,
     });
 
@@ -446,15 +599,24 @@ export function useVoiceController(
     }
 
     const result = await response.json() as { text?: string };
-    const transcript = result.text?.trim();
-    if (!transcript) {
+    const rawTranscript = (result.text ?? '').trim();
+
+    // Drop obvious hallucinations before even calling autocorrect
+    if (isHallucination(rawTranscript)) {
       setLiveTranscript('');
-      setLastError('OpenAI returned an empty transcript');
+      return;
+    }
+
+    // Autocorrect with GPT — fixes mishearings like "start mitch" → "start wave"
+    const transcript = await autocorrectTranscript(rawTranscript);
+
+    if (!transcript || isHallucination(transcript)) {
+      setLiveTranscript('');
       return;
     }
 
     handleFinalTranscript(transcript);
-  }, [handleFinalTranscript, openAiApiKey, openAiSttModel]);
+  }, [autocorrectTranscript, handleFinalTranscript, openAiApiKey, openAiSttModel]);
 
   const cleanupOpenAiRecording = useCallback(() => {
     if (voiceRafRef.current !== null) {
@@ -484,7 +646,6 @@ export function useVoiceController(
     void (async () => {
       try {
         setLastError(null);
-        setLiveTranscript('Listening...');
         audioChunksRef.current = [];
 
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -523,10 +684,13 @@ export function useVoiceController(
           audioChunksRef.current = [];
           cleanupOpenAiRecording();
 
-          if (!heardSpeech || audioBlob.size === 0) {
+          // Minimum blob size — silence blobs are tiny; real speech even at 400ms is larger than this.
+          // Kept low enough to not discard short commands like "pause" or "cancel".
+          const MIN_BLOB_BYTES = 4000;
+          if (!heardSpeech || audioBlob.size < MIN_BLOB_BYTES) {
             if (openAiSessionActiveRef.current) {
-              setLiveTranscript('Listening...');
-              window.setTimeout(() => startOpenAiRecordingRef.current(), 150);
+              // Nothing heard — restart silently, no UI changes
+              startOpenAiRecordingRef.current();
             } else {
               setLiveTranscript('');
               setIsListening(false);
@@ -534,15 +698,17 @@ export function useVoiceController(
             return;
           }
 
+          // Speech detected — restart listening immediately while transcription runs in parallel
+          if (openAiSessionActiveRef.current) {
+            startOpenAiRecordingRef.current();
+          }
+
           void transcribeWithOpenAi(audioBlob)
             .catch((error: unknown) => {
-              setLiveTranscript('');
               setLastError(error instanceof Error ? error.message : 'OpenAI STT failed');
             })
             .finally(() => {
-              if (openAiSessionActiveRef.current) {
-                window.setTimeout(() => startOpenAiRecordingRef.current(), 250);
-              } else {
+              if (!openAiSessionActiveRef.current) {
                 setIsListening(false);
               }
             });
@@ -569,37 +735,43 @@ export function useVoiceController(
           const elapsed = now - startedAt;
           const threshold = Math.max(OPENAI_MIN_VOICE_THRESHOLD, noiseFloor * OPENAI_NOISE_MULTIPLIER);
 
+          // Update noise floor while quiet
           if (!heardSpeech) {
             noiseFloor = noiseFloor * 0.95 + rms * 0.05;
           }
 
           if (rms > threshold) {
+            // Real voice detected — update UI
             heardSpeech = true;
             lastVoiceAt = now;
+            setAudioLevel(Math.min(1, rms * 10));
             setLiveTranscript('Hearing you...');
-          } else if (
-            heardSpeech &&
-            now - lastVoiceAt > OPENAI_SILENCE_MS &&
-            elapsed > OPENAI_MIN_RECORDING_MS
-          ) {
-            setLiveTranscript('Transcribing with OpenAI...');
+            setVoicePhase('hearing');
+          } else if (heardSpeech && now - lastVoiceAt > OPENAI_SILENCE_MS && elapsed > OPENAI_MIN_RECORDING_MS) {
+            // Was speaking, now gone silent long enough — send to OpenAI
+            setLiveTranscript('');
+            setVoicePhase('processing');
+            setAudioLevel(0);
             stopRecorder();
             return;
           } else if (!heardSpeech && elapsed > OPENAI_MAX_RECORDING_MS) {
+            // Timed out with no voice — restart silently
+            stopRecorder();
+            return;
+          } else if (elapsed > OPENAI_MAX_RECORDING_MS) {
+            // Hard cap hit — send whatever we have
+            setLiveTranscript('');
+            setVoicePhase('processing');
+            setAudioLevel(0);
             stopRecorder();
             return;
           }
-
-          if (elapsed > OPENAI_MAX_RECORDING_MS) {
-            setLiveTranscript('Transcribing with OpenAI...');
-            stopRecorder();
-            return;
-          }
+          // While quiet and waiting: do NOT update audioLevel or liveTranscript — stay still
 
           voiceRafRef.current = requestAnimationFrame(monitorVoice);
         };
 
-        recorder.start(250);
+        recorder.start(100); // smaller chunks = less tail latency when we cut
         setIsListening(true);
         voiceRafRef.current = requestAnimationFrame(monitorVoice);
       } catch (error) {
@@ -621,12 +793,14 @@ export function useVoiceController(
       if (openAiSessionActiveRef.current) return;
       openAiSessionActiveRef.current = true;
       setIsListening(true);
+      setVoicePhase('listening');
       startOpenAiRecording();
       return;
     }
 
     if (!recognitionRef.current) return;
     setLastError(null);
+    setVoicePhase('listening');
     recognitionRef.current.start();
     setIsListening(true);
   }, [shouldUseOpenAi, startOpenAiRecording]);
@@ -635,6 +809,8 @@ export function useVoiceController(
     if (shouldUseOpenAi) {
       openAiSessionActiveRef.current = false;
       setLiveTranscript('');
+      setVoicePhase('idle');
+      setAudioLevel(0);
       if (mediaRecorderRef.current?.state === 'recording') {
         mediaRecorderRef.current.stop();
       } else {
@@ -646,6 +822,8 @@ export function useVoiceController(
 
     recognitionRef.current?.stop();
     setIsListening(false);
+    setVoicePhase('idle');
+    setAudioLevel(0);
   }, [cleanupOpenAiRecording, shouldUseOpenAi]);
 
   return {
@@ -654,6 +832,8 @@ export function useVoiceController(
     liveTranscript,
     lastTranscript,
     lastError,
+    audioLevel,
+    voicePhase,
     startListening,
     stopListening,
   };
