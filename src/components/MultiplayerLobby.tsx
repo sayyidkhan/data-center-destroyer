@@ -8,14 +8,14 @@ interface MultiplayerLobbyProps {
   onBack: () => void;
   onJoined: (roomId: string, playerRole: 'host' | 'guest', roomSeed: number) => void;
   onReady?: () => void;
+  playerId: string;
 }
 
-export function MultiplayerLobby({ onBack, onJoined, onReady }: MultiplayerLobbyProps) {
+export function MultiplayerLobby({ onBack, onJoined, onReady, playerId }: MultiplayerLobbyProps) {
   const [stage, setStage] = useState<LobbyStage>('create');
   const [roomCode, setRoomCode] = useState('');
   const [inputCode, setInputCode] = useState('');
   const [error, setError] = useState('');
-  const [playerId] = useState(() => `player_${Math.random().toString(36).slice(2, 9)}`);
   const roomIdRef = useRef<string | null>(null);
 
   const createRoom = useMutation(api.rooms.createRoom as any);
@@ -42,6 +42,7 @@ export function MultiplayerLobby({ onBack, onJoined, onReady }: MultiplayerLobby
     try {
       const result = await joinRoom({ code: inputCode.trim().toUpperCase(), guestId: playerId });
       roomIdRef.current = result.roomId;
+      setRoomCode(inputCode.trim().toUpperCase());
       onJoined(result.roomId, 'guest', result.roomSeed);
       setStage('ready');
     } catch (e: any) {
@@ -266,6 +267,7 @@ function ReadyScreen({
 
   const handleReady = useCallback(() => {
     setHasClickedReady(true);
+    console.log('[Lobby] Ready clicked, calling onReady');
     onReady?.();
   }, [onReady]);
 
@@ -289,9 +291,17 @@ function ReadyScreen({
         <div className="flex flex-col items-center gap-2">
           <span className="font-mono text-xs uppercase tracking-widest text-white/40">Room Code</span>
           <span className="rounded-xl border border-fuchsia-400/25 bg-fuchsia-400/10 px-6 py-2 font-mono text-2xl font-black tracking-[0.15em] text-fuchsia-300">
-            {roomCode}
+            {roomCode || '...'}
           </span>
         </div>
+
+        {room === undefined && (
+          <p className="font-mono text-xs text-white/40 animate-pulse">Loading room state...</p>
+        )}
+
+        {room === null && (
+          <p className="font-mono text-xs text-red-300">Room not found.</p>
+        )}
 
         <div className="flex items-center gap-4 font-mono text-sm text-white/60">
           <span className="flex items-center gap-2">

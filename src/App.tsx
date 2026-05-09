@@ -137,8 +137,10 @@ export default function App() {
   // Watch room state for ready → countdown transition
   useEffect(() => {
     if (!room || !playerRole) return;
+    console.log('[MP] room status:', room.status, 'phase:', snapshot.phase, 'hostReady:', room.hostReady, 'guestReady:', room.guestReady);
     if (room.status === 'playing' && snapshot.phase === 'menu') {
       // Both ready — start countdown
+      console.log('[MP] Both ready! Starting countdown...');
       stateRef.current = {
         ...stateRef.current,
         phase: 'countdown',
@@ -398,7 +400,12 @@ export default function App() {
 
   const handleReady = useCallback(async () => {
     if (!roomId || !playerRole) return;
-    await setReady({ roomId, playerId, ready: true });
+    try {
+      await setReady({ roomId, playerId, ready: true });
+    } catch (err: any) {
+      console.error('setReady failed:', err.message || err);
+      alert('Ready failed: ' + (err.message || 'Unknown error'));
+    }
   }, [roomId, playerRole, playerId, setReady]);
 
   const handleCountdownComplete = useCallback(() => {
@@ -629,7 +636,7 @@ export default function App() {
       </div>
 
       {menuStage === 'mp_lobby' && snapshot.phase === 'menu' && (
-        <MultiplayerLobby onBack={handleBackFromLobby} onJoined={handleJoinRoom} onReady={handleReady} />
+        <MultiplayerLobby onBack={handleBackFromLobby} onJoined={handleJoinRoom} onReady={handleReady} playerId={playerId} />
       )}
     </div>
   );
