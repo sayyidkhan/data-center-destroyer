@@ -13,8 +13,12 @@ import {
   UPGRADE_FIRE_RATE_MULTIPLIER, UPGRADE_RANGE_MULTIPLIER, WAVE_HP_SCALE_PER_WAVE, STARTING_OFFENSE_RESOURCE,
 } from './constants';
 import { buildAttackPath, buildPath, buildPathGrid, distance, angleTo } from './pathfinding';
+import { createSeededRandom } from './rng';
 
 let nextId = 1;
+export function resetUidCounter(seed: number) {
+  nextId = seed;
+}
 const uid = () => `id_${nextId++}`;
 const PLAYER_BASE_TARGET_ID = 'player_base';
 const OPPONENT_BASE_TARGET_ID = 'opponent_base';
@@ -99,7 +103,9 @@ function createHero(id: string, start: Vec2): Hero {
   };
 }
 
-export function createInitialState(): GameState {
+export function createInitialState(roomSeed: number = 1, playerId: string = 'single'): GameState {
+  resetUidCounter(roomSeed);
+  const random = createSeededRandom(roomSeed);
   const path = buildPath();
   const attackPath = buildAttackPath();
   const grid = buildPathGrid(GRID_COLS, GRID_ROWS);
@@ -146,6 +152,10 @@ export function createInitialState(): GameState {
     totalKills: 0,
     totalGoldEarned: STARTING_GOLD,
     cameraX: 0,
+    roomSeed,
+    random,
+    playerId,
+    opponentCursor: null,
   };
 }
 
@@ -323,7 +333,9 @@ export function tickGame(state: GameState, deltaMs: number): GameState {
   let s = { ...state };
 
   s = tickPvpMeta(s, scaledMs);
-  s = tickAiBuilder(s, scaledMs);
+  if (s.gameMode !== 'multi_player') {
+    s = tickAiBuilder(s, scaledMs);
+  }
 
   // Spawn enemies
   s = tickSpawning(s, scaledMs);
@@ -333,7 +345,9 @@ export function tickGame(state: GameState, deltaMs: number): GameState {
 
   // Hero movement and machine-gun support fire
   s = tickHero(s, dt, scaledMs);
-  s = tickOpponentHero(s, dt, scaledMs);
+  if (s.gameMode !== 'multi_player') {
+    s = tickOpponentHero(s, dt, scaledMs);
+  }
 
   // Tower targeting & firing
   s = tickTowers(s, scaledMs);
@@ -381,9 +395,11 @@ function tickPvpMeta(state: GameState, elapsedMs: number): GameState {
 
   if (s.phase !== 'playing') return s;
 
-  while (s.aiAttackTimer <= 0) {
-    s = spawnAiAttack(s);
-    s.aiAttackTimer += AI_ATTACK_INTERVAL_MS;
+  if (s.gameMode !== 'multi_player') {
+    while (s.aiAttackTimer <= 0) {
+      s = spawnAiAttack(s);
+      s.aiAttackTimer += AI_ATTACK_INTERVAL_MS;
+    }
   }
 
   return s;
@@ -399,7 +415,7 @@ function spawnAiAttack(state: GameState): GameState {
           ? ['speeder_rush', 'swarm_burst', 'grunt_pack']
           : ['grunt_pack'];
 
-  const attackId = attackIds[Math.floor(Math.random() * attackIds.length)];
+  const attackId = attackIds[Math.floor(state.random() * attackIds.length)];
   const attack = ATTACK_PACKAGE_DEFS[attackId];
   const newEnemies = attack.payload.flatMap(group =>
     Array.from({ length: group.count }, () => spawnEnemy(state, group.type, 'opponent'))
@@ -442,7 +458,7 @@ function findAiBuildCell(state: GameState): { gridX: number; gridY: number } | n
 
       const sidePressure = Math.abs(gridX - GRID_COLS * 0.72) * 3;
       const laneBias = Math.abs(gridY - GRID_ROWS * 0.5) * 7;
-      const score = pathDistance + sidePressure + laneBias + Math.random() * CELL_SIZE;
+      const score = pathDistance + sidePressure + laneBias + state.random() * CELL_SIZE;
       if (!best || score < best.score) best = { gridX, gridY, score };
     }
   }
@@ -923,11 +939,11 @@ function calculateDamage(rawDamage: number, enemy: Enemy, minimum = 1): number {
   return Math.max(minimum, armoredDamage * (1 + enemy.exposedMultiplier));
 }
 
-function applyCannonDebuff(enemy: Enemy, towerLevel: number): 'armor_break' | 'exposed' | null {
-  if (Math.random() >= CANNON_DEBUFF_CHANCE[towerLevel]) return null;
+function applyCannonDebuff(enemy: Enemy, towerLevel: number, random: () => number): 'armor_break' | 'exposed' | null {
+  if (random() >= CANNON_DEBUFF_CHANCE[towerLevel]) return null;
 
   const duration = CANNON_DEBUFF_DURATION[towerLevel];
-  if (Math.random() < 0.5) {
+  if (random() < 0.5) {
     enemy.armorBreakAmount = Math.max(enemy.armorBreakAmount, CANNON_ARMOR_BREAK[towerLevel]);
     enemy.armorBreakTimer = Math.max(enemy.armorBreakTimer, duration);
     return 'armor_break';
@@ -1441,7 +1457,7 @@ function tickProjectiles(state: GameState, dt: number): GameState {
       e.hp -= dmg;
 
       if (hit.towerType === 'cannon') {
-        const debuff = applyCannonDebuff(e, hit.towerLevel);
+        const debuff = applyCannonDebuff(e, hit.towerLevel, state.random);
         if (debuff) {
           const color = debuff === 'armor_break' ? '#ffab40' : '#64b5f6';
           for (let i = 0; i < 7; i++) {
@@ -1466,7 +1482,7 @@ function tickProjectiles(state: GameState, dt: number): GameState {
         e.slowFactor = Math.min(e.slowFactor, 1 - hit.slow);
         e.slowTimer = hit.slowDur;
 
-        if (hit.projectileType === 'frost_bolt' && Math.random() < FROST_FREEZE_CHANCE) {
+        if (hit.projectileType === 'frost_bolt' && state.random() < FROST_FREEZE_CHANCE) {
           e.frozenTimer = Math.max(e.frozenTimer, FROST_FREEZE_MS);
         }
       }

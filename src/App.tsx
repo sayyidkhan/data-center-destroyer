@@ -1,6 +1,8 @@
 import React, { useRef, useState, useCallback, useEffect, useLayoutEffect } from 'react';
-import type { AttackPackageId, GameState, TowerType } from './game/types';
+import { useMutation, useQuery } from 'convex/react';
+import type { AttackPackageId, GameState, TowerType, GameAction } from './game/types';
 import { commandHeroMove, createInitialState, deployAttackPackage, placeTower, sellTower, upgradeTower, startWave } from './game/engine';
+import { applyAction } from './game/actions';
 import { renderGame } from './game/renderer';
 import { type PerfStats, useGameLoop } from './hooks/useGameLoop';
 import { CELL_SIZE, GRID_COLS, VIEWPORT_COLS, VIEWPORT_W, VIEWPORT_H, CANVAS_W, CANVAS_H, RULER_W, RULER_H, MAP_W, HUD_SLOT_H, FOOTER_H, FOOTER_GRID_MIN_W, isPlayerBuildableCell } from './game/constants';
@@ -9,6 +11,9 @@ import { TowerInspector, TowerShopStrip } from './components/TowerShop';
 import { GameOverlay } from './components/GameOverlay';
 import { InspectMiniStat } from './components/InspectMiniStat';
 import { formatCompactCount } from './formatCompactCount';
+import { MultiplayerLobby } from './components/MultiplayerLobby';
+import { CountdownOverlay } from './components/CountdownOverlay';
+import { api } from '../convex/_generated/api';
 
 const MAX_CAM_X = MAP_W - VIEWPORT_W;
 const PAN_ZONE = 60;   // px from edge that triggers auto-pan
@@ -19,7 +24,7 @@ const CHROME_FRAME_STYLE = {
   boxShadow: '0 0 60px rgba(0,212,255,0.08), 0 20px 60px rgba(0,0,0,0.6)',
 } as const;
 
-type MenuStage = 'launch' | 'pick_mode';
+type MenuStage = 'launch' | 'pick_mode' | 'mp_lobby';
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -51,16 +56,102 @@ export default function App() {
     }
   }, []);
 
+  // ---- Multiplayer state ----
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const roomIdRef = useRef<string | null>(null);
+  roomIdRef.current = roomId;
+  const [playerRole, setPlayerRole] = useState<'host' | 'guest' | null>(null);
+  const playerRoleRef = useRef<'host' | 'guest' | null>(null);
+  playerRoleRef.current = playerRole;
+  const pendingActionsRef = useRef<GameAction[]>([]);
+  const preTickRef = useRef<((state: GameState) => GameState) | undefined>(undefined);
+  const [playerId] = useState(() => `player_${Math.random().toString(36).slice(2, 9)}`);
+  const tickCounterRef = useRef(0);
+
+  const sendAction = useMutation(api.rooms.sendAction as any);
+  const setReady = useMutation(api.rooms.setReady as any);
+  const heartbeat = useMutation(api.rooms.heartbeat as any);
+  const leaveRoom = useMutation(api.rooms.leaveRoom as any);
+
+  const room = useQuery(
+    api.rooms.getRoom as any,
+    roomId ? { roomId } : 'skip'
+  );
+
+  const opponentActions = useQuery(
+    api.rooms.getActions as any,
+    roomId ? { roomId, afterTick: tickCounterRef.current - 120 } : 'skip'
+  );
+
+  // Apply pending actions before each tick
+  useEffect(() => {
+    preTickRef.current = (state: GameState) => {
+      let s = state;
+      const actions = pendingActionsRef.current;
+      pendingActionsRef.current = [];
+      for (const action of actions) {
+        s = applyAction(s, action);
+      }
+      return s;
+    };
+  }, []);
+
   const renderFn = useCallback((ctx: CanvasRenderingContext2D, state: GameState, time: number) => {
     renderGame(ctx, state, hoveredCellRef.current, time);
   }, []);
 
-  const { start, stop } = useGameLoop(stateRef, setThrottledSnapshot, canvasRef, renderFn, setPerfStats);
+  const { start, stop } = useGameLoop(stateRef, setThrottledSnapshot, canvasRef, renderFn, setPerfStats, preTickRef);
 
   useEffect(() => {
     start();
     return stop;
   }, [start, stop]);
+
+  // Process opponent actions
+  useEffect(() => {
+    if (!opponentActions || opponentActions.length === 0) return;
+    const myRole = playerRoleRef.current;
+    if (!myRole) return;
+
+    for (const action of opponentActions) {
+      if (action.player === myRole) continue; // skip my own actions
+      pendingActionsRef.current.push({
+        type: action.type,
+        tick: action.tick,
+        ...action.payload,
+      } as GameAction);
+    }
+  }, [opponentActions]);
+
+  // Heartbeat
+  useEffect(() => {
+    if (!roomId) return;
+    const id = setInterval(() => {
+      if (roomIdRef.current) {
+        heartbeat({ roomId: roomIdRef.current, playerId }).catch(() => {});
+      }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [roomId, heartbeat, playerId]);
+
+  // Watch room state for ready → countdown transition
+  useEffect(() => {
+    if (!room || !playerRole) return;
+    if (room.status === 'playing' && snapshot.phase === 'menu') {
+      // Both ready — start countdown
+      stateRef.current = {
+        ...stateRef.current,
+        phase: 'countdown',
+        gameMode: 'multi_player',
+      };
+      setSnapshot({ ...stateRef.current });
+    }
+    if (room.status === 'ended' && snapshot.phase !== 'menu' && snapshot.phase !== 'game_over' && snapshot.phase !== 'victory') {
+      // Opponent disconnected
+      stateRef.current = { ...stateRef.current, phase: 'game_over' };
+      setSnapshot({ ...stateRef.current });
+    }
+  }, [room, playerRole, snapshot.phase]);
 
   const prevPhaseRef = useRef<GameState['phase'] | undefined>(undefined);
   useEffect(() => {
@@ -115,7 +206,6 @@ export default function App() {
     const rect = canvasRef.current!.getBoundingClientRect();
     const scaleX = CANVAS_W / rect.width;
     const scaleY = CANVAS_H / rect.height;
-    // Subtract ruler gutter so coords map to game-grid space
     const viewX = (e.clientX - rect.left) * scaleX - RULER_W;
     const viewY = (e.clientY - rect.top) * scaleY - RULER_H;
     return {
@@ -132,6 +222,21 @@ export default function App() {
     };
   }, [getWorldPoint]);
 
+  // ---- Send multiplayer action ----
+  const sendGameAction = useCallback((action: GameAction) => {
+    if (stateRef.current.gameMode !== 'multi_player') return;
+    const rid = roomIdRef.current;
+    if (!rid) return;
+    tickCounterRef.current++;
+    sendAction({
+      roomId: rid,
+      playerId,
+      tick: tickCounterRef.current,
+      type: action.type,
+      payload: action,
+    }).catch(() => {});
+  }, [sendAction, playerId]);
+
   // ---- Canvas Events ----
 
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -142,6 +247,7 @@ export default function App() {
     if (state.selectedTowerType && state.grid[y]?.[x] === 'empty' && isPlayerBuildableCell(x)) {
       stateRef.current = placeTower(state, x, y, state.selectedTowerType);
       setSnapshot({ ...stateRef.current });
+      sendGameAction({ type: 'PLACE_TOWER', tick: tickCounterRef.current, gridX: x, gridY: y, towerType: state.selectedTowerType });
       return;
     }
 
@@ -154,20 +260,21 @@ export default function App() {
 
     stateRef.current = commandHeroMove(stateRef.current, point.x, point.y);
     setSnapshot({ ...stateRef.current });
-  }, [getWorldCell, getWorldPoint]);
+    sendGameAction({ type: 'MOVE_HERO', tick: tickCounterRef.current, targetX: point.x, targetY: point.y });
+  }, [getWorldCell, getWorldPoint, sendGameAction]);
 
   const handleCanvasContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const point = getWorldPoint(e);
     stateRef.current = commandHeroMove(stateRef.current, point.x, point.y);
     setSnapshot({ ...stateRef.current });
-  }, [getWorldPoint]);
+    sendGameAction({ type: 'MOVE_HERO', tick: tickCounterRef.current, targetX: point.x, targetY: point.y });
+  }, [getWorldPoint, sendGameAction]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const { x, y } = getWorldCell(e);
     hoveredCellRef.current = { x, y };
 
-    // Edge pan — compare against game viewport edges (inside ruler gutters)
     const rect = canvasRef.current!.getBoundingClientRect();
     const scaleX = CANVAS_W / rect.width;
     const canvasX = (e.clientX - rect.left) * scaleX;
@@ -175,7 +282,13 @@ export default function App() {
     if (localX < PAN_ZONE) mousePanRef.current = -1;
     else if (localX > VIEWPORT_W - PAN_ZONE) mousePanRef.current = 1;
     else mousePanRef.current = 0;
-  }, [getWorldCell]);
+
+    // Send cursor position in multiplayer
+    if (stateRef.current.gameMode === 'multi_player') {
+      const worldPoint = getWorldPoint(e);
+      sendGameAction({ type: 'CURSOR_MOVE', tick: tickCounterRef.current, x: worldPoint.x, y: worldPoint.y });
+    }
+  }, [getWorldCell, getWorldPoint, sendGameAction]);
 
   const handleMouseLeave = useCallback(() => {
     hoveredCellRef.current = null;
@@ -192,17 +305,20 @@ export default function App() {
   const handleUpgrade = useCallback((id: string) => {
     stateRef.current = upgradeTower(stateRef.current, id);
     setSnapshot({ ...stateRef.current });
-  }, []);
+    sendGameAction({ type: 'UPGRADE_TOWER', tick: tickCounterRef.current, towerId: id });
+  }, [sendGameAction]);
 
   const handleSell = useCallback((id: string) => {
     stateRef.current = sellTower(stateRef.current, id);
     setSnapshot({ ...stateRef.current });
-  }, []);
+    sendGameAction({ type: 'SELL_TOWER', tick: tickCounterRef.current, towerId: id });
+  }, [sendGameAction]);
 
   const handleDeployAttack = useCallback((id: AttackPackageId) => {
     stateRef.current = deployAttackPackage(stateRef.current, id);
     setSnapshot({ ...stateRef.current });
-  }, []);
+    sendGameAction({ type: 'DEPLOY_ATTACK', tick: tickCounterRef.current, packageId: id });
+  }, [sendGameAction]);
 
   const handleDeselect = useCallback(() => {
     stateRef.current = { ...stateRef.current, selectedTowerId: null, selectedTowerType: null };
@@ -224,12 +340,17 @@ export default function App() {
     if (cur.phase === 'menu' || cur.phase === 'wave_complete' || cur.phase === 'playing') {
       stateRef.current = startWave({ ...cur, phase: cur.phase === 'menu' ? 'wave_complete' : cur.phase });
       setSnapshot({ ...stateRef.current });
+      sendGameAction({ type: 'START_WAVE', tick: tickCounterRef.current });
     }
-  }, []);
+  }, [sendGameAction]);
 
   const handleVersusIntroComplete = useCallback(() => {
     if (stateRef.current.phase !== 'versus_intro') return;
-    stateRef.current = { ...stateRef.current, phase: 'wave_complete' };
+    if (stateRef.current.gameMode === 'multi_player') {
+      stateRef.current = { ...stateRef.current, phase: 'countdown' };
+    } else {
+      stateRef.current = { ...stateRef.current, phase: 'wave_complete' };
+    }
     setSnapshot({ ...stateRef.current });
   }, []);
 
@@ -242,7 +363,8 @@ export default function App() {
   const handleSetSpeed = useCallback((speed: number) => {
     stateRef.current = { ...stateRef.current, gameSpeed: speed };
     setSnapshot({ ...stateRef.current });
-  }, []);
+    sendGameAction({ type: 'SET_SPEED', tick: tickCounterRef.current, speed });
+  }, [sendGameAction]);
 
   const handleStart = useCallback(() => {
     stateRef.current = { ...stateRef.current, gameMode: 'single_player', phase: 'versus_intro' };
@@ -251,6 +373,36 @@ export default function App() {
 
   const handleRestart = useCallback(() => {
     stateRef.current = { ...createInitialState(), gameMode: 'single_player', phase: 'wave_complete' };
+    setSnapshot({ ...stateRef.current });
+  }, []);
+
+  const handleMultiplayerStart = useCallback(() => {
+    setMenuStage('mp_lobby');
+  }, []);
+
+  const handleJoinRoom = useCallback((rid: string, role: 'host' | 'guest', seed: number) => {
+    setRoomId(rid);
+    setPlayerRole(role);
+    stateRef.current = createInitialState(seed, role);
+    setSnapshot({ ...stateRef.current });
+  }, []);
+
+  const handleBackFromLobby = useCallback(() => {
+    if (roomId) {
+      leaveRoom({ roomId, playerId }).catch(() => {});
+      setRoomId(null);
+      setPlayerRole(null);
+    }
+    setMenuStage('pick_mode');
+  }, [roomId, leaveRoom, playerId]);
+
+  const handleReady = useCallback(async () => {
+    if (!roomId || !playerRole) return;
+    await setReady({ roomId, playerId, ready: true });
+  }, [roomId, playerRole, playerId, setReady]);
+
+  const handleCountdownComplete = useCallback(() => {
+    stateRef.current = { ...stateRef.current, phase: 'wave_complete' };
     setSnapshot({ ...stateRef.current });
   }, []);
 
@@ -265,7 +417,7 @@ export default function App() {
         e.preventDefault();
         if (state.phase === 'menu') {
           if (menuStageRef.current === 'launch') setMenuStage('pick_mode');
-          else handleStart();
+          else if (menuStageRef.current === 'pick_mode') handleStart();
         } else if (state.phase === 'wave_complete') handleStartMatch();
       }
       if (e.key === 'p' || e.key === 'P') {
@@ -277,11 +429,15 @@ export default function App() {
           setMenuStage('launch');
           return;
         }
+        if (state.phase === 'menu' && menuStageRef.current === 'mp_lobby') {
+          e.preventDefault();
+          handleBackFromLobby();
+          return;
+        }
         stateRef.current = { ...stateRef.current, selectedTowerType: null, selectedTowerId: null };
         setSnapshot({ ...stateRef.current });
       }
-      // Arrow key / A/D pan (disabled during matchup reel)
-      if (state.phase !== 'versus_intro') {
+      if (state.phase !== 'versus_intro' && state.phase !== 'countdown') {
         if (e.key === 'ArrowRight' || e.key === 'd') {
           stateRef.current = { ...stateRef.current, cameraX: Math.min(MAX_CAM_X, stateRef.current.cameraX + CELL_SIZE * 3) };
           setSnapshot({ ...stateRef.current });
@@ -291,7 +447,7 @@ export default function App() {
           setSnapshot({ ...stateRef.current });
         }
       }
-      if (TOWER_KEYS[e.key] && state.phase !== 'game_over' && state.phase !== 'victory' && state.phase !== 'versus_intro') {
+      if (TOWER_KEYS[e.key] && state.phase !== 'game_over' && state.phase !== 'victory' && state.phase !== 'versus_intro' && state.phase !== 'countdown') {
         const type = TOWER_KEYS[e.key];
         stateRef.current = {
           ...stateRef.current,
@@ -303,9 +459,9 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [handleStart, handleStartMatch, handlePause]);
+  }, [handleStart, handleStartMatch, handlePause, handleBackFromLobby]);
 
-  const isGameActive = snapshot.phase !== 'menu' && snapshot.phase !== 'versus_intro';
+  const isGameActive = snapshot.phase !== 'menu' && snapshot.phase !== 'versus_intro' && snapshot.phase !== 'countdown';
 
   const gameChromeRef = useRef<HTMLDivElement>(null);
   const [chromeFit, setChromeFit] = useState<{ scale: number; boxW: number; boxH: number }>({
@@ -346,7 +502,6 @@ export default function App() {
     };
   }, []);
 
-  // Mini-map scroll indicator
   const camPct = snapshot.cameraX / MAX_CAM_X;
 
   const fitScale = chromeFit.scale;
@@ -377,7 +532,6 @@ export default function App() {
             transformOrigin: 'top left',
           }}
         >
-        {/* Same fixed shell on menu & in-game so scale-to-fit and footprint match */}
         <div
           className={`relative z-30 flex shrink-0 flex-col ${
             !isGameActive ? 'border-b border-cyber-blue/20' : ''
@@ -397,14 +551,12 @@ export default function App() {
           )}
         </div>
 
-        {/* Main: canvas + shop — shrink-0 so flex parents never squash fixed canvas height */}
         <div
           className="relative z-10 flex shrink-0 items-stretch"
           style={{ height: CANVAS_H + FOOTER_H }}
           onClick={handleOutsideSelectionClick}
         >
           <div className="relative flex shrink-0 flex-col" style={{ width: CANVAS_W }}>
-            {/* Isolate overlays to the grid only — inset-0 must not include the footer row */}
             <div className="relative shrink-0 overflow-hidden" style={{ width: CANVAS_W, height: CANVAS_H }}>
               <canvas
                 ref={canvasRef}
@@ -426,10 +578,19 @@ export default function App() {
                 onVersusIntroComplete={handleVersusIntroComplete}
                 onRestart={handleRestart}
                 onResume={handlePause}
+                onMultiplayerStart={handleMultiplayerStart}
+                room={room}
+                playerRole={playerRole}
+                onReady={handleReady}
               />
+              {snapshot.phase === 'countdown' && (
+                <CountdownOverlay
+                  hostName={room?.hostId?.slice(0, 8) ?? 'Host'}
+                  guestName={room?.guestId?.slice(0, 8) ?? 'Guest'}
+                  onComplete={handleCountdownComplete}
+                />
+              )}
             </div>
-
-
 
             <div
               className={`relative z-10 shrink-0 overflow-x-auto overflow-y-hidden p-3 [scrollbar-width:thin] ${
@@ -466,6 +627,10 @@ export default function App() {
         </div>
         </div>
       </div>
+
+      {menuStage === 'mp_lobby' && snapshot.phase === 'menu' && (
+        <MultiplayerLobby onBack={handleBackFromLobby} onJoined={handleJoinRoom} />
+      )}
     </div>
   );
 }
