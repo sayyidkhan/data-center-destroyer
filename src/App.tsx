@@ -909,9 +909,18 @@ function MenuChromeTop() {
   return (
     <div className="relative flex h-full min-h-0 flex-col justify-center gap-2 px-5 select-none">
       <div className="pointer-events-none absolute inset-0 opacity-[0.55]" style={{ backgroundImage: 'repeating-linear-gradient(-60deg, transparent, transparent 11px, rgba(0,212,255,0.045) 11px, rgba(0,212,255,0.045) 12px)' }} />
-      <div className="relative flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] uppercase tracking-[0.22em] text-cyber-blue/55">
-        <span className="inline-flex items-center gap-2"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyber-green shadow-[0_0_8px_rgba(100,255,218,0.55)]" />Facility standby</span>
-        <span className="hidden text-white/35 sm:inline">Defense grid offline · awaiting deployment order</span>
+      <div className="relative flex items-center gap-3">
+        <img
+          src="/dcd-logo.png"
+          alt="DCD"
+          className="h-8 w-8 shrink-0 object-contain"
+          style={{ filter: 'drop-shadow(0 0 6px rgba(0,212,255,0.5))' }}
+          draggable={false}
+        />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] uppercase tracking-[0.22em] text-cyber-blue/55">
+          <span className="inline-flex items-center gap-2"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyber-green shadow-[0_0_8px_rgba(100,255,218,0.55)]" />Facility standby</span>
+          <span className="hidden text-white/35 sm:inline">Defense grid offline · awaiting deployment order</span>
+        </div>
       </div>
       <div className="relative flex flex-wrap gap-2">
         {['Uplink idle', 'Threat net quiet', 'Tower fabric cold'].map((label) => (

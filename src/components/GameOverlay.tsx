@@ -88,30 +88,13 @@ function MenuScreen({
       >
         {stage === 'launch' ? (
           <div className="flex flex-col items-center gap-2">
-            <div className="mb-1 flex items-center gap-2">
-              <div className="h-px w-8 bg-cyber-blue/60" />
-              <span className="font-mono text-xs uppercase tracking-widest text-cyber-blue/60">2026 Edition</span>
-              <div className="h-px w-8 bg-cyber-blue/60" />
-            </div>
-            <h1
-              className="text-6xl font-black uppercase tracking-tight text-white"
-              style={{
-                fontFamily: 'Orbitron, sans-serif',
-                textShadow: '0 0 40px rgba(0,212,255,0.6), 0 0 80px rgba(0,212,255,0.2)',
-              }}
-            >
-              DATA CENTER
-            </h1>
-            <h1
-              className="text-6xl font-black uppercase tracking-tight"
-              style={{
-                fontFamily: 'Orbitron, sans-serif',
-                color: '#00d4ff',
-                textShadow: '0 0 40px rgba(0,212,255,0.8), 0 0 80px rgba(0,212,255,0.4)',
-              }}
-            >
-              DESTROYER
-            </h1>
+            <img
+              src="/dcd-logoandname.png"
+              alt="Data Center Destroyer"
+              className="w-full max-w-sm select-none"
+              style={{ filter: 'drop-shadow(0 0 32px rgba(0,212,255,0.45)) drop-shadow(0 0 64px rgba(0,212,255,0.2))' }}
+              draggable={false}
+            />
           </div>
         ) : null}
 
