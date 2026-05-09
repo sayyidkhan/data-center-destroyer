@@ -159,7 +159,7 @@ export function renderGame(
   // Translate: gutter offset + camera pan
   ctx.translate(RULER_W - state.cameraX, RULER_H);
 
-  drawMapZones(ctx, state.cameraX);
+  drawMapZones(ctx, state.cameraX, state.playerSlot);
   drawGrid(ctx, state, hoveredCell, state.cameraX, time);
   drawPath(ctx, state, time);
   drawDataCenter(ctx, state, time, 'player');
@@ -389,33 +389,20 @@ function isWorldRectVisible(x: number, w: number, cameraX: number, padding = 0) 
   return x + w >= cameraX - padding && x <= cameraX + VIEWPORT_W + padding;
 }
 
-function drawMapZones(ctx: CanvasRenderingContext2D, cameraX: number) {
+function drawMapZones(ctx: CanvasRenderingContext2D, cameraX: number, playerSlot: 1 | 2 = 2) {
   const third = MAP_W / 3;
+  const yourSide   = { fill: 'rgba(0, 148, 255, 0.075)',  edge: 'rgba(0, 212, 255, 0.3)',   text: 'rgba(94, 203, 255, 0.4)',   label: 'YOUR SIDE' };
+  const oppSide    = { fill: 'rgba(255, 60, 100, 0.08)',   edge: 'rgba(255, 92, 120, 0.32)', text: 'rgba(255, 150, 165, 0.42)', label: 'OPPONENT SIDE' };
+  const contested  = { fill: 'rgba(255, 204, 0, 0.06)',    edge: 'rgba(255, 204, 0, 0.26)',  text: 'rgba(255, 220, 120, 0.36)', label: 'CONTESTED MIDDLE' };
+
+  // Slot 1 = right side; slot 2 = left side
+  const leftZone  = playerSlot === 1 ? oppSide  : yourSide;
+  const rightZone = playerSlot === 1 ? yourSide : oppSide;
+
   const zones = [
-    {
-      x: 0,
-      w: third,
-      label: 'YOUR SIDE',
-      fill: 'rgba(0, 148, 255, 0.075)',
-      edge: 'rgba(0, 212, 255, 0.3)',
-      text: 'rgba(94, 203, 255, 0.4)',
-    },
-    {
-      x: third,
-      w: third,
-      label: 'CONTESTED MIDDLE',
-      fill: 'rgba(255, 204, 0, 0.06)',
-      edge: 'rgba(255, 204, 0, 0.26)',
-      text: 'rgba(255, 220, 120, 0.36)',
-    },
-    {
-      x: third * 2,
-      w: MAP_W - third * 2,
-      label: 'OPPONENT SIDE',
-      fill: 'rgba(255, 60, 100, 0.08)',
-      edge: 'rgba(255, 92, 120, 0.32)',
-      text: 'rgba(255, 150, 165, 0.42)',
-    },
+    { x: 0,        w: third,          ...leftZone },
+    { x: third,    w: third,          ...contested },
+    { x: third * 2, w: MAP_W - third * 2, ...rightZone },
   ];
 
   ctx.save();
@@ -477,12 +464,12 @@ function drawGrid(ctx: CanvasRenderingContext2D, state: GameState, hoveredCell: 
       const y = row * CELL_SIZE;
 
       const isHovered = hoveredCell && hoveredCell.x === col && hoveredCell.y === row;
-      const canPlace = cell === 'empty' && state.selectedTowerType !== null && isPlayerBuildableCell(col);
+      const canPlace = cell === 'empty' && state.selectedTowerType !== null && isPlayerBuildableCell(col, state.playerSlot);
 
       if (isHovered && canPlace) {
         ctx.fillStyle = 'rgba(0, 212, 255, 0.12)';
         ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-      } else if (isHovered && state.selectedTowerType && cell === 'empty' && !isPlayerBuildableCell(col)) {
+      } else if (isHovered && state.selectedTowerType && cell === 'empty' && !isPlayerBuildableCell(col, state.playerSlot)) {
         ctx.fillStyle = 'rgba(255, 68, 68, 0.08)';
         ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
       } else if (isHovered) {
@@ -1720,7 +1707,7 @@ function drawRangePreview(ctx: CanvasRenderingContext2D, state: GameState, hover
     const cx = hoveredCell.x * CELL_SIZE + CELL_SIZE / 2;
     const cy = hoveredCell.y * CELL_SIZE + CELL_SIZE / 2;
     const range = def.range * CELL_SIZE;
-    const canPlace = state.grid[hoveredCell.y]?.[hoveredCell.x] === 'empty' && isPlayerBuildableCell(hoveredCell.x);
+    const canPlace = state.grid[hoveredCell.y]?.[hoveredCell.x] === 'empty' && isPlayerBuildableCell(hoveredCell.x, state.playerSlot);
 
     ctx.strokeStyle = canPlace ? 'rgba(0, 255, 136, 0.5)' : 'rgba(255, 68, 68, 0.5)';
     ctx.fillStyle = canPlace ? 'rgba(0, 255, 136, 0.06)' : 'rgba(255, 68, 68, 0.06)';

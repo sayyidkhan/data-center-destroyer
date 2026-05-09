@@ -16,7 +16,8 @@ export function useGameLoop(
   setStateSnapshot: (s: GameState) => void,
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   renderFn: (ctx: CanvasRenderingContext2D, state: GameState, time: number) => void,
-  setPerfStats?: (stats: PerfStats) => void
+  setPerfStats?: (stats: PerfStats) => void,
+  preTickRef?: React.MutableRefObject<((state: GameState) => GameState) | undefined>
 ) {
   const rafRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
@@ -35,7 +36,11 @@ export function useGameLoop(
 
     // Advance game logic
     const updateStart = performance.now();
-    const newState = tickGame(stateRef.current, delta);
+    let currentState = stateRef.current;
+    if (preTickRef?.current) {
+      currentState = preTickRef.current(currentState);
+    }
+    const newState = tickGame(currentState, delta);
     const updateMs = performance.now() - updateStart;
     stateRef.current = newState;
 

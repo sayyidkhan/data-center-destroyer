@@ -6,6 +6,8 @@ import {
   CANNON_ARMOR_BREAK, CANNON_DEBUFF_CHANCE, CANNON_DEBUFF_DURATION, CANNON_EXPOSED_BONUS,
   FROST_FREEZE_CHANCE, FROST_FREEZE_MS, HERO_PROJECTILE, LASER_ACTIVE_MS, LASER_CYCLE_MS,
   isPlayerBuildableCell,
+  isEnemyBuildableCell,
+  RIGHT_BUILD_MIN_COL,
   ENEMY_TOWER_LOADOUT,
   AI_BUILD_GOLD_PER_SECOND, AI_BUILD_INTERVAL_MS, AI_MAX_TOWERS, AI_STARTING_BUILD_GOLD,
   MAX_OFFENSE_RESOURCE, OFFENSE_RESOURCE_PER_SECOND,
@@ -13,8 +15,12 @@ import {
   UPGRADE_FIRE_RATE_MULTIPLIER, UPGRADE_RANGE_MULTIPLIER, WAVE_HP_SCALE_PER_WAVE, STARTING_OFFENSE_RESOURCE,
 } from './constants';
 import { buildAttackPath, buildPath, buildPathGrid, distance, angleTo } from './pathfinding';
+import { createSeededRandom } from './rng';
 
 let nextId = 1;
+export function resetUidCounter(seed: number) {
+  nextId = seed;
+}
 const uid = () => `id_${nextId++}`;
 const PLAYER_BASE_TARGET_ID = 'player_base';
 const OPPONENT_BASE_TARGET_ID = 'opponent_base';
@@ -99,17 +105,29 @@ function createHero(id: string, start: Vec2): Hero {
   };
 }
 
-export function createInitialState(): GameState {
+export function createInitialState(
+  roomSeed: number = 1,
+  playerId: string = 'single',
+  playerSlot: 1 | 2 = 2,
+  gameMode: 'single_player' | 'multi_player' | null = null
+): GameState {
+  resetUidCounter(roomSeed);
+  const random = createSeededRandom(roomSeed);
   const path = buildPath();
   const attackPath = buildAttackPath();
   const grid = buildPathGrid(GRID_COLS, GRID_ROWS);
   const attackCooldowns = Object.fromEntries(
     (Object.keys(ATTACK_PACKAGE_DEFS) as AttackPackageId[]).map(id => [id, 0])
   ) as Record<AttackPackageId, number>;
-  // Start camera showing the data center (left side of map)
+
+  // Player slot 1 = right side, Player slot 2 = left side
+  const myStart = playerSlot === 1 ? OPPONENT_HERO_START : HERO_START;
+  const theirStart = playerSlot === 1 ? HERO_START : OPPONENT_HERO_START;
+  const cameraStart = playerSlot === 1 ? MAP_W - VIEWPORT_W : 0;
+
   return {
     phase: 'menu',
-    gameMode: null,
+    gameMode,
     wave: 0,
     maxWaves: MAX_WAVES,
     lives: STARTING_LIVES,
@@ -125,10 +143,11 @@ export function createInitialState(): GameState {
     aiBuildGold: AI_STARTING_BUILD_GOLD,
     aiBuildTimer: AI_BUILD_INTERVAL_MS,
     gold: STARTING_GOLD,
+    guestGold: STARTING_GOLD,
     score: 0,
-    towers: createEnemyTowers(),
-    hero: createHero('hero', HERO_START),
-    opponentHero: createHero('opponent_hero', OPPONENT_HERO_START),
+    towers: gameMode === 'multi_player' ? [] : createEnemyTowers(),
+    hero: createHero('hero', myStart),
+    opponentHero: createHero('opponent_hero', theirStart),
     enemies: [],
     projectiles: [],
     particles: [],
@@ -145,7 +164,12 @@ export function createInitialState(): GameState {
     gameSpeed: 1,
     totalKills: 0,
     totalGoldEarned: STARTING_GOLD,
-    cameraX: 0,
+    cameraX: cameraStart,
+    roomSeed,
+    random,
+    playerId,
+    opponentCursor: null,
+    playerSlot,
   };
 }
 
@@ -168,30 +192,39 @@ export function commandHeroMove(state: GameState, x: number, y: number): GameSta
   };
 }
 
-export function placeTower(state: GameState, gridX: number, gridY: number, type: TowerType): GameState {
+export function placeTower(state: GameState, gridX: number, gridY: number, type: TowerType, owner?: Tower['owner']): GameState {
   const def = TOWER_DEFS[type];
-  if (state.gold < def.cost) return state;
   if (gridX < 0 || gridX >= GRID_COLS || gridY < 0 || gridY >= GRID_ROWS) return state;
-  if (!isPlayerBuildableCell(gridX)) return state;
+
+  const actualOwner = owner ?? 'player';
+  if (actualOwner === 'player' && !isPlayerBuildableCell(gridX, state.playerSlot)) return state;
+  if (actualOwner === 'opponent' && !isEnemyBuildableCell(gridX, state.playerSlot)) return state;
+
+  // Host and guest have separate gold pools
+  const isGuestTower = actualOwner === 'opponent';
+  const gold = isGuestTower ? (state.guestGold ?? 0) : state.gold;
+  if (gold < def.cost) return state;
+
   if (state.grid[gridY][gridX] !== 'empty') return state;
 
   const newGrid = state.grid.map(row => [...row]);
   newGrid[gridY][gridX] = 'tower';
 
-  const tower = createTower(type, gridX, gridY, 'player');
+  const tower = createTower(type, gridX, gridY, actualOwner);
 
   return {
     ...state,
-    gold: state.gold - def.cost,
+    gold: isGuestTower ? state.gold : state.gold - def.cost,
+    guestGold: isGuestTower ? (state.guestGold ?? 0) - def.cost : (state.guestGold ?? 0),
     towers: [...state.towers, tower],
     grid: newGrid,
     selectedTowerType: null,
   };
 }
 
-export function sellTower(state: GameState, towerId: string): GameState {
+export function sellTower(state: GameState, towerId: string, callerOwner: Tower['owner'] = 'player'): GameState {
   const tower = state.towers.find(t => t.id === towerId);
-  if (!tower || tower.owner !== 'player') return state;
+  if (!tower || tower.owner !== callerOwner) return state;
 
   const def = TOWER_DEFS[tower.type];
   let sellValue = Math.floor(def.cost * SELL_REFUND_RATE);
@@ -202,22 +235,26 @@ export function sellTower(state: GameState, towerId: string): GameState {
   const newGrid = state.grid.map(row => [...row]);
   newGrid[tower.gridY][tower.gridX] = 'empty';
 
+  const isGuestTower = callerOwner === 'opponent';
   return {
     ...state,
-    gold: state.gold + sellValue,
+    gold: isGuestTower ? state.gold : state.gold + sellValue,
+    guestGold: isGuestTower ? (state.guestGold ?? 0) + sellValue : (state.guestGold ?? 0),
     towers: state.towers.filter(t => t.id !== towerId),
     grid: newGrid,
     selectedTowerId: null,
   };
 }
 
-export function upgradeTower(state: GameState, towerId: string): GameState {
+export function upgradeTower(state: GameState, towerId: string, callerOwner: Tower['owner'] = 'player'): GameState {
   const tower = state.towers.find(t => t.id === towerId);
-  if (!tower || tower.owner !== 'player' || tower.level >= 3) return state;
+  if (!tower || tower.owner !== callerOwner || tower.level >= 3) return state;
 
   const def = TOWER_DEFS[tower.type];
   const cost = def.upgradeCost[tower.level - 1];
-  if (state.gold < cost) return state;
+  const isGuestTower = callerOwner === 'opponent';
+  const availableGold = isGuestTower ? (state.guestGold ?? 0) : state.gold;
+  if (availableGold < cost) return state;
 
   const newTower: Tower = {
     ...tower,
@@ -229,7 +266,8 @@ export function upgradeTower(state: GameState, towerId: string): GameState {
 
   return {
     ...state,
-    gold: state.gold - cost,
+    gold: isGuestTower ? state.gold : state.gold - cost,
+    guestGold: isGuestTower ? (state.guestGold ?? 0) - cost : (state.guestGold ?? 0),
     towers: state.towers.map(t => t.id === towerId ? newTower : t),
   };
 }
@@ -323,7 +361,9 @@ export function tickGame(state: GameState, deltaMs: number): GameState {
   let s = { ...state };
 
   s = tickPvpMeta(s, scaledMs);
-  s = tickAiBuilder(s, scaledMs);
+  if (s.gameMode !== 'multi_player') {
+    s = tickAiBuilder(s, scaledMs);
+  }
 
   // Spawn enemies
   s = tickSpawning(s, scaledMs);
@@ -333,7 +373,9 @@ export function tickGame(state: GameState, deltaMs: number): GameState {
 
   // Hero movement and machine-gun support fire
   s = tickHero(s, dt, scaledMs);
-  s = tickOpponentHero(s, dt, scaledMs);
+  if (s.gameMode !== 'multi_player') {
+    s = tickOpponentHero(s, dt, scaledMs);
+  }
 
   // Tower targeting & firing
   s = tickTowers(s, scaledMs);
@@ -354,6 +396,7 @@ export function tickGame(state: GameState, deltaMs: number): GameState {
       ...s,
       phase: s.opponentBaseHp <= 0 ? 'victory' : s.wave >= MAX_WAVES ? 'victory' : 'wave_complete',
       gold: s.gold + waveDef.goldBonus,
+      guestGold: (s.guestGold ?? 0) + waveDef.goldBonus,
       totalGoldEarned: s.totalGoldEarned + waveDef.goldBonus,
       score: s.score + waveDef.goldBonus * SCORE_PER_REWARD,
       projectiles: [],
@@ -381,9 +424,11 @@ function tickPvpMeta(state: GameState, elapsedMs: number): GameState {
 
   if (s.phase !== 'playing') return s;
 
-  while (s.aiAttackTimer <= 0) {
-    s = spawnAiAttack(s);
-    s.aiAttackTimer += AI_ATTACK_INTERVAL_MS;
+  if (s.gameMode !== 'multi_player') {
+    while (s.aiAttackTimer <= 0) {
+      s = spawnAiAttack(s);
+      s.aiAttackTimer += AI_ATTACK_INTERVAL_MS;
+    }
   }
 
   return s;
@@ -399,7 +444,7 @@ function spawnAiAttack(state: GameState): GameState {
           ? ['speeder_rush', 'swarm_burst', 'grunt_pack']
           : ['grunt_pack'];
 
-  const attackId = attackIds[Math.floor(Math.random() * attackIds.length)];
+  const attackId = attackIds[Math.floor(state.random() * attackIds.length)];
   const attack = ATTACK_PACKAGE_DEFS[attackId];
   const newEnemies = attack.payload.flatMap(group =>
     Array.from({ length: group.count }, () => spawnEnemy(state, group.type, 'opponent'))
@@ -432,7 +477,7 @@ function findAiBuildCell(state: GameState): { gridX: number; gridY: number } | n
   const occupied = new Set(state.towers.map(tower => `${tower.gridX},${tower.gridY}`));
   let best: { gridX: number; gridY: number; score: number } | null = null;
 
-  for (let gridX = Math.floor(GRID_COLS / 3); gridX < GRID_COLS; gridX++) {
+  for (let gridX = RIGHT_BUILD_MIN_COL; gridX < GRID_COLS; gridX++) {
     for (let gridY = 0; gridY < GRID_ROWS; gridY++) {
       if (state.grid[gridY]?.[gridX] !== 'empty') continue;
       if (occupied.has(`${gridX},${gridY}`)) continue;
@@ -442,7 +487,7 @@ function findAiBuildCell(state: GameState): { gridX: number; gridY: number } | n
 
       const sidePressure = Math.abs(gridX - GRID_COLS * 0.72) * 3;
       const laneBias = Math.abs(gridY - GRID_ROWS * 0.5) * 7;
-      const score = pathDistance + sidePressure + laneBias + Math.random() * CELL_SIZE;
+      const score = pathDistance + sidePressure + laneBias + state.random() * CELL_SIZE;
       if (!best || score < best.score) best = { gridX, gridY, score };
     }
   }
@@ -923,11 +968,11 @@ function calculateDamage(rawDamage: number, enemy: Enemy, minimum = 1): number {
   return Math.max(minimum, armoredDamage * (1 + enemy.exposedMultiplier));
 }
 
-function applyCannonDebuff(enemy: Enemy, towerLevel: number): 'armor_break' | 'exposed' | null {
-  if (Math.random() >= CANNON_DEBUFF_CHANCE[towerLevel]) return null;
+function applyCannonDebuff(enemy: Enemy, towerLevel: number, random: () => number): 'armor_break' | 'exposed' | null {
+  if (random() >= CANNON_DEBUFF_CHANCE[towerLevel]) return null;
 
   const duration = CANNON_DEBUFF_DURATION[towerLevel];
-  if (Math.random() < 0.5) {
+  if (random() < 0.5) {
     enemy.armorBreakAmount = Math.max(enemy.armorBreakAmount, CANNON_ARMOR_BREAK[towerLevel]);
     enemy.armorBreakTimer = Math.max(enemy.armorBreakTimer, duration);
     return 'armor_break';
@@ -1441,7 +1486,7 @@ function tickProjectiles(state: GameState, dt: number): GameState {
       e.hp -= dmg;
 
       if (hit.towerType === 'cannon') {
-        const debuff = applyCannonDebuff(e, hit.towerLevel);
+        const debuff = applyCannonDebuff(e, hit.towerLevel, state.random);
         if (debuff) {
           const color = debuff === 'armor_break' ? '#ffab40' : '#64b5f6';
           for (let i = 0; i < 7; i++) {
@@ -1466,7 +1511,7 @@ function tickProjectiles(state: GameState, dt: number): GameState {
         e.slowFactor = Math.min(e.slowFactor, 1 - hit.slow);
         e.slowTimer = hit.slowDur;
 
-        if (hit.projectileType === 'frost_bolt' && Math.random() < FROST_FREEZE_CHANCE) {
+        if (hit.projectileType === 'frost_bolt' && state.random() < FROST_FREEZE_CHANCE) {
           e.frozenTimer = Math.max(e.frozenTimer, FROST_FREEZE_MS);
         }
       }

@@ -4,13 +4,14 @@ import { formatCompactCount } from '../formatCompactCount';
 
 interface GameOverlayProps {
   state: GameState;
-  menuStage: 'launch' | 'pick_mode';
+  menuStage: 'launch' | 'pick_mode' | 'mp_lobby';
   onContinueToModeSelect: () => void;
   onBackToLaunch: () => void;
   onStart: () => void;
   onVersusIntroComplete: () => void;
   onRestart: () => void;
   onResume: () => void;
+  onMultiplayerStart?: () => void;
 }
 
 export function GameOverlay({
@@ -22,6 +23,7 @@ export function GameOverlay({
   onVersusIntroComplete,
   onRestart,
   onResume,
+  onMultiplayerStart,
 }: GameOverlayProps) {
   if (state.phase === 'playing' || state.phase === 'wave_complete') return null;
 
@@ -38,6 +40,7 @@ export function GameOverlay({
             onContinueToModeSelect={onContinueToModeSelect}
             onBackToLaunch={onBackToLaunch}
             onStart={onStart}
+            onMultiplayerStart={onMultiplayerStart}
           />
         </div>
       )}
@@ -62,11 +65,13 @@ function MenuScreen({
   onContinueToModeSelect,
   onBackToLaunch,
   onStart,
+  onMultiplayerStart,
 }: {
-  stage: 'launch' | 'pick_mode';
+  stage: 'launch' | 'pick_mode' | 'mp_lobby';
   onContinueToModeSelect: () => void;
   onBackToLaunch: () => void;
   onStart: () => void;
+  onMultiplayerStart?: () => void;
 }) {
   return (
     <div
@@ -155,13 +160,14 @@ function MenuScreen({
 
               <button
                 type="button"
-                disabled
-                className="flex min-h-36 cursor-not-allowed flex-col items-start justify-between rounded-2xl border border-white/[0.08] bg-dark-700/45 p-5 text-left opacity-55"
+                onClick={onMultiplayerStart}
+                className="group flex min-h-36 flex-col items-start justify-between rounded-2xl border border-fuchsia-400/35 bg-fuchsia-400/[0.08] p-5 text-left transition-all hover:scale-[1.02] hover:bg-fuchsia-400/[0.14] active:scale-[0.98]"
+                style={{ boxShadow: '0 0 30px rgba(232,121,249,0.14), 0 4px 20px rgba(0,0,0,0.3)' }}
               >
-                <span className="font-mono text-xs font-bold uppercase tracking-widest text-white/35">Online Mode</span>
-                <span className="font-mono text-2xl font-black uppercase tracking-wide text-white/50">Multiplayer</span>
-                <span className="font-mono text-xs leading-relaxed text-white/35">
-                  Coming soon. Controls will be match-authoritative when real players connect.
+                <span className="font-mono text-xs font-bold uppercase tracking-widest text-fuchsia-300/80">Online Mode</span>
+                <span className="font-mono text-2xl font-black uppercase tracking-wide text-white">Multiplayer</span>
+                <span className="font-mono text-xs leading-relaxed text-white/55">
+                  PvP against a real opponent. Deterministic lockstep with Convex backend.
                 </span>
               </button>
             </div>
@@ -178,6 +184,8 @@ function MenuScreen({
             </div>
           </>
         )}
+
+
       </div>
     </div>
   );

@@ -124,8 +124,18 @@ export type VisualEffect =
       maxLife: number;
     };
 
+export type GameAction =
+  | { type: 'PLACE_TOWER'; tick: number; gridX: number; gridY: number; towerType: TowerType; owner?: Tower['owner'] }
+  | { type: 'MOVE_HERO'; tick: number; targetX: number; targetY: number }
+  | { type: 'DEPLOY_ATTACK'; tick: number; packageId: AttackPackageId }
+  | { type: 'UPGRADE_TOWER'; tick: number; towerId: string; owner?: Tower['owner'] }
+  | { type: 'SELL_TOWER'; tick: number; towerId: string; owner?: Tower['owner'] }
+  | { type: 'START_WAVE'; tick: number }
+  | { type: 'SET_SPEED'; tick: number; speed: number }
+  | { type: 'CURSOR_MOVE'; tick: number; x: number; y: number };
+
 export interface GameState {
-  phase: 'menu' | 'versus_intro' | 'playing' | 'paused' | 'wave_complete' | 'game_over' | 'victory';
+  phase: 'menu' | 'versus_intro' | 'playing' | 'paused' | 'wave_complete' | 'game_over' | 'victory' | 'countdown';
   gameMode: 'single_player' | 'multi_player' | null;
   wave: number;
   maxWaves: number;
@@ -142,6 +152,7 @@ export interface GameState {
   aiBuildGold: number;
   aiBuildTimer: number;
   gold: number;
+  guestGold: number;
   score: number;
   towers: Tower[];
   hero: Hero;
@@ -163,6 +174,11 @@ export interface GameState {
   totalKills: number;
   totalGoldEarned: number;
   cameraX: number;  // pixel offset into the full map (left edge of viewport)
+  roomSeed: number;
+  random: () => number;
+  playerId: string;
+  opponentCursor: { x: number; y: number } | null;
+  playerSlot: 1 | 2; // 1 = right side, 2 = left side
 }
 
 export interface EnemyConfig {

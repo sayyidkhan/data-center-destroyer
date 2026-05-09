@@ -105,14 +105,26 @@ export const VIEWPORT_W = CELL_SIZE * VIEWPORT_COLS;
 export const VIEWPORT_H = CELL_SIZE * GRID_ROWS;
 export const MAP_W = CELL_SIZE * GRID_COLS;
 export const MAP_H = CELL_SIZE * GRID_ROWS;
-export const PLAYER_BUILD_MIN_COL = 0;
-export const PLAYER_BUILD_MAX_COL = Math.floor((GRID_COLS * 2) / 3) - 1;
-export const ENEMY_BUILD_MIN_COL = Math.floor(GRID_COLS / 3);
-export const ENEMY_BUILD_MAX_COL = GRID_COLS - 1;
-export const isPlayerBuildableCell = (gridX: number) =>
-  gridX >= PLAYER_BUILD_MIN_COL && gridX <= PLAYER_BUILD_MAX_COL;
-export const isEnemyBuildableCell = (gridX: number) =>
-  gridX >= ENEMY_BUILD_MIN_COL && gridX <= ENEMY_BUILD_MAX_COL;
+export const LEFT_BUILD_MIN_COL = 0;
+export const LEFT_BUILD_MAX_COL = Math.floor(GRID_COLS / 3) - 1;      // cols 0-21 (left third)
+export const RIGHT_BUILD_MIN_COL = Math.floor((GRID_COLS * 2) / 3);   // cols 44-65 (right third)
+export const RIGHT_BUILD_MAX_COL = GRID_COLS - 1;
+// cols 22-43 are the contested middle — nobody builds there
+
+// Player slot 1 = right side, Player slot 2 = left side
+export const isPlayerBuildableCell = (gridX: number, playerSlot: 1 | 2 = 2) => {
+  if (playerSlot === 1) {
+    return gridX >= RIGHT_BUILD_MIN_COL && gridX <= RIGHT_BUILD_MAX_COL;
+  }
+  return gridX >= LEFT_BUILD_MIN_COL && gridX <= LEFT_BUILD_MAX_COL;
+};
+
+export const isEnemyBuildableCell = (gridX: number, playerSlot: 1 | 2 = 2) => {
+  if (playerSlot === 1) {
+    return gridX >= LEFT_BUILD_MIN_COL && gridX <= LEFT_BUILD_MAX_COL;
+  }
+  return gridX >= RIGHT_BUILD_MIN_COL && gridX <= RIGHT_BUILD_MAX_COL;
+};
 
 /** Fixed HUD strip height — room for readable labels + stats + controls. */
 export const HUD_SLOT_H = MAP_CONFIG.hudSlotHeight;
