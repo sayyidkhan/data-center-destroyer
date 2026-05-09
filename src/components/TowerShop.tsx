@@ -191,7 +191,7 @@ function AttackShopPanel({
         </span>
       </div>
 
-      <div ref={opsScrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-0.5">
+      <div ref={opsScrollRef as React.RefObject<HTMLDivElement>} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-0.5">
         <div className="grid grid-cols-1 gap-1.5">
           {attackIds.map(id => {
             const def = ATTACK_PACKAGE_DEFS[id];
