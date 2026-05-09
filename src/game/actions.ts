@@ -4,15 +4,15 @@ import { commandHeroMove, placeTower, deployAttackPackage, upgradeTower, sellTow
 export function applyAction(state: GameState, action: GameAction): GameState {
   switch (action.type) {
     case 'PLACE_TOWER':
-      return placeTower(state, action.gridX, action.gridY, action.towerType);
+      return placeTower(state, action.gridX, action.gridY, action.towerType, action.owner);
     case 'MOVE_HERO':
       return commandHeroMove(state, action.targetX, action.targetY);
     case 'DEPLOY_ATTACK':
       return deployAttackPackage(state, action.packageId);
     case 'UPGRADE_TOWER':
-      return upgradeTower(state, action.towerId);
+      return upgradeTower(state, action.towerId, action.owner);
     case 'SELL_TOWER':
-      return sellTower(state, action.towerId);
+      return sellTower(state, action.towerId, action.owner);
     case 'START_WAVE':
       return startWave(state);
     case 'SET_SPEED':

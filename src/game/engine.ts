@@ -6,6 +6,8 @@ import {
   CANNON_ARMOR_BREAK, CANNON_DEBUFF_CHANCE, CANNON_DEBUFF_DURATION, CANNON_EXPOSED_BONUS,
   FROST_FREEZE_CHANCE, FROST_FREEZE_MS, HERO_PROJECTILE, LASER_ACTIVE_MS, LASER_CYCLE_MS,
   isPlayerBuildableCell,
+  isEnemyBuildableCell,
+  RIGHT_BUILD_MIN_COL,
   ENEMY_TOWER_LOADOUT,
   AI_BUILD_GOLD_PER_SECOND, AI_BUILD_INTERVAL_MS, AI_MAX_TOWERS, AI_STARTING_BUILD_GOLD,
   MAX_OFFENSE_RESOURCE, OFFENSE_RESOURCE_PER_SECOND,
@@ -103,7 +105,12 @@ function createHero(id: string, start: Vec2): Hero {
   };
 }
 
-export function createInitialState(roomSeed: number = 1, playerId: string = 'single', playerSlot: 1 | 2 = 2): GameState {
+export function createInitialState(
+  roomSeed: number = 1,
+  playerId: string = 'single',
+  playerSlot: 1 | 2 = 2,
+  gameMode: 'single_player' | 'multi_player' | null = null
+): GameState {
   resetUidCounter(roomSeed);
   const random = createSeededRandom(roomSeed);
   const path = buildPath();
@@ -120,7 +127,7 @@ export function createInitialState(roomSeed: number = 1, playerId: string = 'sin
 
   return {
     phase: 'menu',
-    gameMode: null,
+    gameMode,
     wave: 0,
     maxWaves: MAX_WAVES,
     lives: STARTING_LIVES,
@@ -136,8 +143,9 @@ export function createInitialState(roomSeed: number = 1, playerId: string = 'sin
     aiBuildGold: AI_STARTING_BUILD_GOLD,
     aiBuildTimer: AI_BUILD_INTERVAL_MS,
     gold: STARTING_GOLD,
+    guestGold: STARTING_GOLD,
     score: 0,
-    towers: createEnemyTowers(),
+    towers: gameMode === 'multi_player' ? [] : createEnemyTowers(),
     hero: createHero('hero', myStart),
     opponentHero: createHero('opponent_hero', theirStart),
     enemies: [],
@@ -184,30 +192,39 @@ export function commandHeroMove(state: GameState, x: number, y: number): GameSta
   };
 }
 
-export function placeTower(state: GameState, gridX: number, gridY: number, type: TowerType): GameState {
+export function placeTower(state: GameState, gridX: number, gridY: number, type: TowerType, owner?: Tower['owner']): GameState {
   const def = TOWER_DEFS[type];
-  if (state.gold < def.cost) return state;
   if (gridX < 0 || gridX >= GRID_COLS || gridY < 0 || gridY >= GRID_ROWS) return state;
-  if (!isPlayerBuildableCell(gridX, state.playerSlot)) return state;
+
+  const actualOwner = owner ?? 'player';
+  if (actualOwner === 'player' && !isPlayerBuildableCell(gridX, state.playerSlot)) return state;
+  if (actualOwner === 'opponent' && !isEnemyBuildableCell(gridX, state.playerSlot)) return state;
+
+  // Host and guest have separate gold pools
+  const isGuestTower = actualOwner === 'opponent';
+  const gold = isGuestTower ? (state.guestGold ?? 0) : state.gold;
+  if (gold < def.cost) return state;
+
   if (state.grid[gridY][gridX] !== 'empty') return state;
 
   const newGrid = state.grid.map(row => [...row]);
   newGrid[gridY][gridX] = 'tower';
 
-  const tower = createTower(type, gridX, gridY, 'player');
+  const tower = createTower(type, gridX, gridY, actualOwner);
 
   return {
     ...state,
-    gold: state.gold - def.cost,
+    gold: isGuestTower ? state.gold : state.gold - def.cost,
+    guestGold: isGuestTower ? (state.guestGold ?? 0) - def.cost : (state.guestGold ?? 0),
     towers: [...state.towers, tower],
     grid: newGrid,
     selectedTowerType: null,
   };
 }
 
-export function sellTower(state: GameState, towerId: string): GameState {
+export function sellTower(state: GameState, towerId: string, callerOwner: Tower['owner'] = 'player'): GameState {
   const tower = state.towers.find(t => t.id === towerId);
-  if (!tower || tower.owner !== 'player') return state;
+  if (!tower || tower.owner !== callerOwner) return state;
 
   const def = TOWER_DEFS[tower.type];
   let sellValue = Math.floor(def.cost * SELL_REFUND_RATE);
@@ -218,22 +235,26 @@ export function sellTower(state: GameState, towerId: string): GameState {
   const newGrid = state.grid.map(row => [...row]);
   newGrid[tower.gridY][tower.gridX] = 'empty';
 
+  const isGuestTower = callerOwner === 'opponent';
   return {
     ...state,
-    gold: state.gold + sellValue,
+    gold: isGuestTower ? state.gold : state.gold + sellValue,
+    guestGold: isGuestTower ? (state.guestGold ?? 0) + sellValue : (state.guestGold ?? 0),
     towers: state.towers.filter(t => t.id !== towerId),
     grid: newGrid,
     selectedTowerId: null,
   };
 }
 
-export function upgradeTower(state: GameState, towerId: string): GameState {
+export function upgradeTower(state: GameState, towerId: string, callerOwner: Tower['owner'] = 'player'): GameState {
   const tower = state.towers.find(t => t.id === towerId);
-  if (!tower || tower.owner !== 'player' || tower.level >= 3) return state;
+  if (!tower || tower.owner !== callerOwner || tower.level >= 3) return state;
 
   const def = TOWER_DEFS[tower.type];
   const cost = def.upgradeCost[tower.level - 1];
-  if (state.gold < cost) return state;
+  const isGuestTower = callerOwner === 'opponent';
+  const availableGold = isGuestTower ? (state.guestGold ?? 0) : state.gold;
+  if (availableGold < cost) return state;
 
   const newTower: Tower = {
     ...tower,
@@ -245,7 +266,8 @@ export function upgradeTower(state: GameState, towerId: string): GameState {
 
   return {
     ...state,
-    gold: state.gold - cost,
+    gold: isGuestTower ? state.gold : state.gold - cost,
+    guestGold: isGuestTower ? (state.guestGold ?? 0) - cost : (state.guestGold ?? 0),
     towers: state.towers.map(t => t.id === towerId ? newTower : t),
   };
 }
@@ -374,6 +396,7 @@ export function tickGame(state: GameState, deltaMs: number): GameState {
       ...s,
       phase: s.opponentBaseHp <= 0 ? 'victory' : s.wave >= MAX_WAVES ? 'victory' : 'wave_complete',
       gold: s.gold + waveDef.goldBonus,
+      guestGold: (s.guestGold ?? 0) + waveDef.goldBonus,
       totalGoldEarned: s.totalGoldEarned + waveDef.goldBonus,
       score: s.score + waveDef.goldBonus * SCORE_PER_REWARD,
       projectiles: [],
@@ -454,7 +477,7 @@ function findAiBuildCell(state: GameState): { gridX: number; gridY: number } | n
   const occupied = new Set(state.towers.map(tower => `${tower.gridX},${tower.gridY}`));
   let best: { gridX: number; gridY: number; score: number } | null = null;
 
-  for (let gridX = Math.floor(GRID_COLS / 3); gridX < GRID_COLS; gridX++) {
+  for (let gridX = RIGHT_BUILD_MIN_COL; gridX < GRID_COLS; gridX++) {
     for (let gridY = 0; gridY < GRID_ROWS; gridY++) {
       if (state.grid[gridY]?.[gridX] !== 'empty') continue;
       if (occupied.has(`${gridX},${gridY}`)) continue;

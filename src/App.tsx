@@ -63,9 +63,11 @@ export default function App() {
 
   const room = useQuery(api.rooms.getRoom as any, roomId ? { roomId } : 'skip');
   const convexGameState = useQuery(api.rooms.getGameState as any, roomId ? { roomId } : 'skip');
+  const processedActionKeysRef = useRef<Set<string>>(new Set());
+
   const opponentActions = useQuery(
     api.rooms.getActions as any,
-    roomId && playerRole === 'host' ? { roomId, afterTick: tickCounterRef.current - 120 } : 'skip'
+    roomId && playerRole === 'host' ? { roomId, afterTick: 0 } : 'skip'
   );
 
   const setThrottledSnapshot = useCallback((s: GameState) => {
@@ -110,10 +112,14 @@ export default function App() {
 
     for (const action of opponentActions) {
       if (action.player === 'host') continue; // skip my own actions
+      const key = `${action.player}:${action.tick}:${action.type}:${JSON.stringify(action.payload)}`;
+      if (processedActionKeysRef.current.has(key)) continue;
+      processedActionKeysRef.current.add(key);
       pendingActionsRef.current.push({
         type: action.type,
         tick: action.tick,
         ...action.payload,
+        owner: action.player === 'host' ? 'player' : 'opponent',
       } as GameAction);
     }
   }, [opponentActions]);
@@ -121,59 +127,76 @@ export default function App() {
   // ---- HOST: Write state to Convex after every tick ----
   useEffect(() => {
     if (!roomId || playerRole !== 'host') return;
-    if (stateRef.current.phase !== 'playing' && stateRef.current.phase !== 'wave_complete' && stateRef.current.phase !== 'countdown') return;
 
     const id = setInterval(() => {
-      if (roomIdRef.current && playerRoleRef.current === 'host') {
-        const s = stateRef.current;
-        const serializable = { ...s, random: undefined };
-        writeGameState({
-          roomId: roomIdRef.current,
-          state: serializable,
-          tick: tickCounterRef.current,
-        }).catch(() => {});
-      }
+      if (!roomIdRef.current || playerRoleRef.current !== 'host') return;
+      const s = stateRef.current;
+      if (s.phase !== 'playing' && s.phase !== 'wave_complete' && s.phase !== 'countdown') return;
+      const serializable = { ...s, random: undefined };
+      writeGameState({
+        roomId: roomIdRef.current,
+        state: serializable,
+        tick: tickCounterRef.current,
+      }).catch(() => {});
     }, STATE_SYNC_INTERVAL_MS);
     return () => clearInterval(id);
   }, [roomId, playerRole, writeGameState]);
 
-  // ---- GUEST: Render-only loop (no local simulation) ----
+  // ---- GUEST: Apply Convex state updates (separate from render loop) ----
+  useEffect(() => {
+    if (!roomId || playerRole !== 'guest') return;
+    if (!convexGameState?.state) return;
+
+    const serverState = convexGameState.state as GameState;
+    const local = stateRef.current;
+    // Swap perspective: guest sees their own stuff as 'player' and host's as 'opponent'
+    const merged: GameState = {
+      ...serverState,
+      // Preserve guest-local fields so they are never overridden by the host's state
+      playerSlot: local.playerSlot,
+      playerId: local.playerId,
+      random: local.random,
+      cameraX: local.cameraX,                       // guest keeps their own camera position
+      selectedTowerType: local.selectedTowerType,   // guest keeps their own tower selection
+      selectedTowerId: local.selectedTowerId,       // guest keeps their own inspector selection
+      // Swap ownership perspective
+      towers: serverState.towers.map(t => ({
+        ...t,
+        owner: t.owner === 'player' ? 'opponent' : 'player',
+      })),
+      hero: serverState.opponentHero,
+      opponentHero: serverState.hero,
+      playerBaseHp: serverState.opponentBaseHp,
+      opponentBaseHp: serverState.playerBaseHp,
+      maxPlayerBaseHp: serverState.maxOpponentBaseHp,
+      maxOpponentBaseHp: serverState.maxPlayerBaseHp,
+      lives: serverState.opponentBaseHp,
+      // Guest has their own independent gold pool
+      gold: serverState.guestGold ?? local.gold,
+      offenseResource: serverState.offenseResource,
+    };
+    stateRef.current = merged;
+    setSnapshot({ ...merged });
+  }, [roomId, playerRole, convexGameState]);
+
+  // ---- GUEST: Stable 60fps render loop (no local simulation) ----
   useEffect(() => {
     if (!roomId || playerRole !== 'guest') return;
 
     let raf = 0;
-    let lastTime = 0;
     const renderLoop = (time: number) => {
       if (playerRoleRef.current !== 'guest') return;
-
-      // Read latest state from Convex
-      if (convexGameState?.state) {
-        const serverState = convexGameState.state as GameState;
-        const merged: GameState = {
-          ...serverState,
-          playerSlot: stateRef.current.playerSlot,
-          playerId: stateRef.current.playerId,
-          random: stateRef.current.random,
-        };
-        stateRef.current = merged;
-        setSnapshot({ ...merged });
-      }
-
-      // Render directly (bypass useGameLoop)
       const canvas = canvasRef.current;
       if (canvas) {
         const ctx = canvas.getContext('2d');
-        if (ctx) {
-          renderGame(ctx, stateRef.current, hoveredCellRef.current, time / 1000);
-        }
+        if (ctx) renderGame(ctx, stateRef.current, hoveredCellRef.current, time / 1000);
       }
-
       raf = requestAnimationFrame(renderLoop);
     };
 
     raf = requestAnimationFrame(renderLoop);
     return () => { if (raf) cancelAnimationFrame(raf); };
-  }, [roomId, playerRole, convexGameState]);
+  }, [roomId, playerRole]);
 
   // ---- Action sync ----
   useEffect(() => {
@@ -264,8 +287,10 @@ export default function App() {
     const state = stateRef.current;
 
     if (state.selectedTowerType && state.grid[y]?.[x] === 'empty' && isPlayerBuildableCell(x, state.playerSlot)) {
-      stateRef.current = placeTower(state, x, y, state.selectedTowerType);
-      setSnapshot({ ...stateRef.current });
+      if (playerRoleRef.current !== 'guest') {
+        stateRef.current = placeTower(state, x, y, state.selectedTowerType);
+        setSnapshot({ ...stateRef.current });
+      }
       sendGameAction({ type: 'PLACE_TOWER', tick: tickCounterRef.current, gridX: x, gridY: y, towerType: state.selectedTowerType });
       return;
     }
@@ -277,16 +302,20 @@ export default function App() {
       return;
     }
 
-    stateRef.current = commandHeroMove(stateRef.current, point.x, point.y);
-    setSnapshot({ ...stateRef.current });
+    if (playerRoleRef.current !== 'guest') {
+      stateRef.current = commandHeroMove(stateRef.current, point.x, point.y);
+      setSnapshot({ ...stateRef.current });
+    }
     sendGameAction({ type: 'MOVE_HERO', tick: tickCounterRef.current, targetX: point.x, targetY: point.y });
   }, [getWorldCell, getWorldPoint, sendGameAction]);
 
   const handleCanvasContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const point = getWorldPoint(e);
-    stateRef.current = commandHeroMove(stateRef.current, point.x, point.y);
-    setSnapshot({ ...stateRef.current });
+    if (playerRoleRef.current !== 'guest') {
+      stateRef.current = commandHeroMove(stateRef.current, point.x, point.y);
+      setSnapshot({ ...stateRef.current });
+    }
     sendGameAction({ type: 'MOVE_HERO', tick: tickCounterRef.current, targetX: point.x, targetY: point.y });
   }, [getWorldPoint, sendGameAction]);
 
@@ -314,20 +343,26 @@ export default function App() {
   }, []);
 
   const handleUpgrade = useCallback((id: string) => {
-    stateRef.current = upgradeTower(stateRef.current, id);
-    setSnapshot({ ...stateRef.current });
+    if (playerRoleRef.current !== 'guest') {
+      stateRef.current = upgradeTower(stateRef.current, id);
+      setSnapshot({ ...stateRef.current });
+    }
     sendGameAction({ type: 'UPGRADE_TOWER', tick: tickCounterRef.current, towerId: id });
   }, [sendGameAction]);
 
   const handleSell = useCallback((id: string) => {
-    stateRef.current = sellTower(stateRef.current, id);
-    setSnapshot({ ...stateRef.current });
+    if (playerRoleRef.current !== 'guest') {
+      stateRef.current = sellTower(stateRef.current, id);
+      setSnapshot({ ...stateRef.current });
+    }
     sendGameAction({ type: 'SELL_TOWER', tick: tickCounterRef.current, towerId: id });
   }, [sendGameAction]);
 
   const handleDeployAttack = useCallback((id: AttackPackageId) => {
-    stateRef.current = deployAttackPackage(stateRef.current, id);
-    setSnapshot({ ...stateRef.current });
+    if (playerRoleRef.current !== 'guest') {
+      stateRef.current = deployAttackPackage(stateRef.current, id);
+      setSnapshot({ ...stateRef.current });
+    }
     sendGameAction({ type: 'DEPLOY_ATTACK', tick: tickCounterRef.current, packageId: id });
   }, [sendGameAction]);
 
@@ -347,8 +382,10 @@ export default function App() {
   const handleStartMatch = useCallback(() => {
     const cur = stateRef.current;
     if (cur.phase === 'menu' || cur.phase === 'wave_complete' || cur.phase === 'playing') {
-      stateRef.current = startWave({ ...cur, phase: cur.phase === 'menu' ? 'wave_complete' : cur.phase });
-      setSnapshot({ ...stateRef.current });
+      if (playerRoleRef.current !== 'guest') {
+        stateRef.current = startWave({ ...cur, phase: cur.phase === 'menu' ? 'wave_complete' : cur.phase });
+        setSnapshot({ ...stateRef.current });
+      }
       sendGameAction({ type: 'START_WAVE', tick: tickCounterRef.current });
     }
   }, [sendGameAction]);
@@ -370,8 +407,10 @@ export default function App() {
   }, []);
 
   const handleSetSpeed = useCallback((speed: number) => {
-    stateRef.current = { ...stateRef.current, gameSpeed: speed };
-    setSnapshot({ ...stateRef.current });
+    if (playerRoleRef.current !== 'guest') {
+      stateRef.current = { ...stateRef.current, gameSpeed: speed };
+      setSnapshot({ ...stateRef.current });
+    }
     sendGameAction({ type: 'SET_SPEED', tick: tickCounterRef.current, speed });
   }, [sendGameAction]);
 
@@ -381,7 +420,8 @@ export default function App() {
   }, []);
 
   const handleRestart = useCallback(() => {
-    stateRef.current = { ...createInitialState(), gameMode: 'single_player', phase: 'wave_complete' };
+    stateRef.current = createInitialState(undefined, undefined, undefined, 'single_player');
+    stateRef.current = { ...stateRef.current, phase: 'wave_complete' };
     setSnapshot({ ...stateRef.current });
   }, []);
 
@@ -394,7 +434,7 @@ export default function App() {
     setPlayerRole(role);
     // Player 1 (host) = right side (slot 1), Player 2 (guest) = left side (slot 2)
     const slot = role === 'host' ? 1 : 2;
-    stateRef.current = createInitialState(seed, role, slot);
+    stateRef.current = createInitialState(seed, role, slot, 'multi_player');
     setSnapshot({ ...stateRef.current });
   }, []);
 

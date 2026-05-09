@@ -125,11 +125,11 @@ export type VisualEffect =
     };
 
 export type GameAction =
-  | { type: 'PLACE_TOWER'; tick: number; gridX: number; gridY: number; towerType: TowerType }
+  | { type: 'PLACE_TOWER'; tick: number; gridX: number; gridY: number; towerType: TowerType; owner?: Tower['owner'] }
   | { type: 'MOVE_HERO'; tick: number; targetX: number; targetY: number }
   | { type: 'DEPLOY_ATTACK'; tick: number; packageId: AttackPackageId }
-  | { type: 'UPGRADE_TOWER'; tick: number; towerId: string }
-  | { type: 'SELL_TOWER'; tick: number; towerId: string }
+  | { type: 'UPGRADE_TOWER'; tick: number; towerId: string; owner?: Tower['owner'] }
+  | { type: 'SELL_TOWER'; tick: number; towerId: string; owner?: Tower['owner'] }
   | { type: 'START_WAVE'; tick: number }
   | { type: 'SET_SPEED'; tick: number; speed: number }
   | { type: 'CURSOR_MOVE'; tick: number; x: number; y: number };
@@ -152,6 +152,7 @@ export interface GameState {
   aiBuildGold: number;
   aiBuildTimer: number;
   gold: number;
+  guestGold: number;
   score: number;
   towers: Tower[];
   hero: Hero;
