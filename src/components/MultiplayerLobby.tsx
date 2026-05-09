@@ -32,12 +32,15 @@ export function MultiplayerLobby({ onBack, onJoined, onReady, playerId }: Multip
 
   // Host: watch for join requests
   useEffect(() => {
-    if (stage === 'host_waiting' && room && room.joinRequests.length > 0) {
-      setStage('host_accept');
-    }
-    if (stage === 'host_waiting' && room && room.guestId) {
-      onJoined(currentRoomId!, 'host', room.roomSeed);
-      setStage('ready');
+    if ((stage === 'host_waiting' || stage === 'host_accept') && room) {
+      const requests = room.joinRequests ?? [];
+      if (stage === 'host_waiting' && requests.length > 0) {
+        setStage('host_accept');
+      }
+      if (room.guestId) {
+        onJoined(currentRoomId!, 'host', room.roomSeed);
+        setStage('ready');
+      }
     }
   }, [room, stage, currentRoomId, onJoined]);
 
@@ -449,7 +452,11 @@ function ReadyScreen({
         </div>
 
         <p className="text-center font-mono text-sm text-white/50">
-          Both players must click Ready to begin the match.
+          {isHost && myReady
+            ? 'You are ready. Waiting for opponent...'
+            : isGuest && opponentReady
+              ? 'Host is ready. Click Ready to begin!'
+              : 'Click Ready when you are prepared to begin.'}
         </p>
 
         <button
@@ -462,7 +469,7 @@ function ReadyScreen({
           {hasClickedReady || myReady ? 'Waiting for opponent...' : 'Ready'}
         </button>
 
-        {opponentReady && (
+        {opponentReady && !myReady && (
           <p className="font-mono text-xs text-cyber-green/70 animate-pulse">
             Opponent is ready!
           </p>

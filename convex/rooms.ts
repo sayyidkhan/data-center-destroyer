@@ -57,7 +57,7 @@ export const requestJoin = mutation({
   handler: async (ctx, args) => {
     const room = await ctx.db.get(args.roomId);
     if (!room) throw new Error("Room not found");
-    if (!room.isPublic) throw new Error("Room is not public");
+    if (room.isPublic !== true) throw new Error("Room is not public");
     if (room.guestId) throw new Error("Room is full");
     if (room.status !== "waiting") throw new Error("Room is not available");
     if (room.hostId === args.guestId) throw new Error("Cannot join your own room");
@@ -85,6 +85,7 @@ export const acceptGuest = mutation({
     await ctx.db.patch(args.roomId, {
       guestId: args.guestId,
       status: "ready",
+      hostReady: true,
       joinRequests: requests.filter((id) => id !== args.guestId),
     });
 
