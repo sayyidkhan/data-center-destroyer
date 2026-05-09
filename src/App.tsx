@@ -5,8 +5,9 @@ import { commandHeroMove, createInitialState, deployAttackPackage, placeTower, s
 import { applyAction } from './game/actions';
 import { renderGame } from './game/renderer';
 import { type PerfStats, useGameLoop } from './hooks/useGameLoop';
+import { useVoiceController, type VoiceCommand, colIndexToLetter } from './hooks/useVoiceController';
 import { CELL_SIZE, GRID_COLS, VIEWPORT_COLS, VIEWPORT_W, VIEWPORT_H, CANVAS_W, CANVAS_H, RULER_W, RULER_H, MAP_W, HUD_SLOT_H, FOOTER_H, FOOTER_GRID_MIN_W, isPlayerBuildableCell } from './game/constants';
-import { HUD } from './components/HUD';
+import { HUD, MatchStatusPanel, type BattleLogEntry } from './components/HUD';
 import { TowerInspector, TowerShopStrip } from './components/TowerShop';
 import { GameOverlay } from './components/GameOverlay';
 import { InspectMiniStat } from './components/InspectMiniStat';
@@ -27,6 +28,9 @@ const CHROME_FRAME_STYLE = {
 
 type MenuStage = 'launch' | 'pick_mode' | 'mp_lobby';
 
+const CHAT_LOG_LIMIT = 8;
+const initialLogTime = Date.now();
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef<GameState>(createInitialState());
@@ -37,8 +41,33 @@ export default function App() {
   const [perfStats, setPerfStats] = useState<PerfStats>({
     fps: 60, frameMs: 16.7, updateMs: 0, renderMs: 0, objects: 0, memoryMb: null,
   });
+  const nextBattleLogIdRef = useRef(1);
+  const [playerBattleLog, setPlayerBattleLog] = useState<BattleLogEntry[]>([
+    { id: 0, text: 'System: say "build cannon at D 6" or "hero move to H 5".', createdAt: initialLogTime, tone: 'info' },
+  ]);
+  const [opponentBattleLog, setOpponentBattleLog] = useState<BattleLogEntry[]>([
+    { id: -1, text: 'AI: defense grid online, awaiting match start.', createdAt: initialLogTime, tone: 'normal' },
+  ]);
   const hoveredCellRef = useRef<{ x: number; y: number } | null>(null);
-  const mousePanRef = useRef(0);
+
+  const appendPlayerLog = useCallback((text: string, tone: BattleLogEntry['tone'] = 'normal') => {
+    const entry = { id: nextBattleLogIdRef.current++, text, createdAt: Date.now(), tone };
+    setPlayerBattleLog(prev => [...prev, entry].slice(-CHAT_LOG_LIMIT));
+  }, []);
+
+  const appendOpponentLog = useCallback((text: string, tone: BattleLogEntry['tone'] = 'normal') => {
+    const entry = { id: nextBattleLogIdRef.current++, text, createdAt: Date.now(), tone };
+    setOpponentBattleLog(prev => [...prev, entry].slice(-CHAT_LOG_LIMIT));
+  }, []);
+
+  // Camera pan via mouse edge proximity
+  const mousePanRef = useRef(0); // -1 left, 0 none, 1 right
+  // Smooth voice-scroll target: null = no active voice scroll
+  const voiceScrollTargetRef = useRef<number | null>(null);
+  // Ref to the Attack Ops scrollable list — driven by voice scrollOps commands
+  const opsScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Throttle React re-renders
   const lastSnapshotRef = useRef(0);
 
   // ---- Multiplayer state ----
@@ -223,17 +252,89 @@ export default function App() {
     if (snapshot.phase === 'menu' && prev !== undefined && prev !== 'menu') setMenuStage('launch');
   }, [snapshot.phase]);
 
-  // Edge-pan ticker
+  const prevBattleStateRef = useRef<{
+    phase: GameState['phase'];
+    playerAttackers: number;
+    opponentAttackers: number;
+    playerBaseHp: number;
+    opponentBaseHp: number;
+    opponentTowers: number;
+  } | null>(null);
+
   useEffect(() => {
-    let raf = 0, last = 0;
+    const current = {
+      phase: snapshot.phase,
+      playerAttackers: snapshot.enemies.filter(enemy => enemy.owner === 'player').length,
+      opponentAttackers: snapshot.enemies.filter(enemy => enemy.owner === 'opponent').length,
+      playerBaseHp: snapshot.playerBaseHp,
+      opponentBaseHp: snapshot.opponentBaseHp,
+      opponentTowers: snapshot.towers.filter(tower => tower.owner === 'opponent').length,
+    };
+    const prev = prevBattleStateRef.current;
+    prevBattleStateRef.current = current;
+    if (!prev) return;
+
+    if (prev.phase !== current.phase) {
+      if (current.phase === 'playing') appendOpponentLog('AI: match live, pressure lanes opening.', 'danger');
+      if (current.phase === 'paused') appendOpponentLog('AI: simulation paused, no new orders.', 'warning');
+      if (current.phase === 'wave_complete') appendOpponentLog('AI: wave cleared, preparing next push.', 'info');
+      if (current.phase === 'victory') appendOpponentLog('AI: core breached, opponent defeated.', 'success');
+      if (current.phase === 'game_over') appendOpponentLog('AI: player core destroyed.', 'danger');
+    }
+
+    if (current.opponentAttackers > prev.opponentAttackers) {
+      appendOpponentLog(`AI: ${current.opponentAttackers} attackers detected. Suggest: reinforce path chokepoints.`, 'danger');
+    }
+
+    if (current.playerAttackers > prev.playerAttackers) {
+      appendPlayerLog(`Ops: ${current.playerAttackers} friendly attackers deployed toward enemy core.`, 'success');
+    }
+
+    if (current.opponentTowers > prev.opponentTowers) {
+      appendOpponentLog(`AI: new tower detected. Enemy now has ${current.opponentTowers}.`, 'warning');
+    }
+
+    if (current.playerBaseHp < prev.playerBaseHp) {
+      appendOpponentLog(`AI: your core hit, HP ${current.playerBaseHp}/${snapshot.maxPlayerBaseHp}.`, 'danger');
+      appendPlayerLog('Suggestion: move hero to intercept or build near the path.', 'warning');
+    }
+
+    if (current.opponentBaseHp < prev.opponentBaseHp) {
+      appendPlayerLog(`Ops: enemy core damaged, HP ${current.opponentBaseHp}/${snapshot.maxOpponentBaseHp}.`, 'success');
+    }
+  }, [appendOpponentLog, appendPlayerLog, snapshot]);
+
+  // Edge-pan + voice smooth-scroll ticker — runs separately from game loop
+  useEffect(() => {
+    let raf = 0;
+    let last = 0;
+    const VOICE_SCROLL_SPEED = 1800; // px/s for voice-initiated scroll
     const tick = (t: number) => {
       const dt = last ? Math.min((t - last) / 1000, 0.05) : 0;
       last = t;
+      const state = stateRef.current;
+      let camX = state.cameraX;
+
+      // Mouse edge pan
       const dir = mousePanRef.current;
       if (dir !== 0) {
-        const state = stateRef.current;
-        const newCamX = Math.max(0, Math.min(MAX_CAM_X, state.cameraX + dir * PAN_SPEED * dt));
-        if (newCamX !== state.cameraX) stateRef.current = { ...state, cameraX: newCamX };
+        camX = Math.max(0, Math.min(MAX_CAM_X, camX + dir * PAN_SPEED * dt));
+      }
+
+      // Voice smooth scroll — lerp toward target
+      const voiceTarget = voiceScrollTargetRef.current;
+      if (voiceTarget !== null) {
+        const remaining = voiceTarget - camX;
+        const step = Math.sign(remaining) * Math.min(Math.abs(remaining), VOICE_SCROLL_SPEED * dt);
+        camX = Math.max(0, Math.min(MAX_CAM_X, camX + step));
+        if (Math.abs(voiceTarget - camX) < 0.5) {
+          camX = Math.max(0, Math.min(MAX_CAM_X, voiceTarget));
+          voiceScrollTargetRef.current = null;
+        }
+      }
+
+      if (camX !== state.cameraX) {
+        stateRef.current = { ...state, cameraX: camX };
       }
       raf = requestAnimationFrame(tick);
     };
@@ -462,6 +563,141 @@ export default function App() {
     setSnapshot({ ...stateRef.current });
   }, []);
 
+  const handleVoiceCommand = useCallback((command: VoiceCommand, transcript: string) => {
+    const state = stateRef.current;
+
+    if (command.type === 'build') {
+      stateRef.current = placeTower(state, command.gridX, command.gridY, command.tower);
+      const placed = stateRef.current !== state;
+      const coord = `${colIndexToLetter(command.gridX)}${command.gridY + 1}`;
+      appendPlayerLog(
+        placed
+          ? `Ops: building ${command.tower} at ${coord}.`
+          : `Ops: could not build ${command.tower} at ${coord}. Check gold/cell.`,
+        placed ? 'success' : 'warning',
+      );
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'heroMove') {
+      stateRef.current = commandHeroMove(
+        state,
+        command.gridX * CELL_SIZE + CELL_SIZE / 2,
+        command.gridY * CELL_SIZE + CELL_SIZE / 2,
+      );
+      appendPlayerLog(`Ops: hero moving to ${colIndexToLetter(command.gridX)}${command.gridY + 1}.`, 'success');
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'heroNudge') {
+      stateRef.current = commandHeroMove(
+        state,
+        state.hero.x + command.dx * CELL_SIZE,
+        state.hero.y + command.dy * CELL_SIZE,
+      );
+      appendPlayerLog('Ops: hero repositioning one cell.', 'success');
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'startWave') {
+      appendPlayerLog('Ops: starting match.', 'success');
+      handleStartMatch();
+      return;
+    }
+
+    if (command.type === 'pause') {
+      appendPlayerLog(state.phase === 'playing' ? 'Ops: pausing match.' : 'Ops: resuming match.', 'info');
+      handlePause();
+      return;
+    }
+
+    if (command.type === 'attack') {
+      const before = stateRef.current;
+      stateRef.current = deployAttackPackage(stateRef.current, command.package);
+      const deployed = stateRef.current !== before;
+      appendPlayerLog(
+        deployed
+          ? `Ops: deploying ${command.package.replace('_', ' ')}.`
+          : `Ops: ${command.package.replace('_', ' ')} not ready yet.`,
+        deployed ? 'success' : 'warning',
+      );
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'upgrade') {
+      const tower = state.towers.find(t =>
+        t.owner === 'player' &&
+        t.gridX === command.gridX &&
+        t.gridY === command.gridY &&
+        (command.tower == null || t.type === command.tower)
+      );
+      if (!tower) {
+        const coord = `${colIndexToLetter(command.gridX)}${command.gridY + 1}`;
+        appendPlayerLog(`Ops: no tower found at ${coord}.`, 'warning');
+        return;
+      }
+      const before = stateRef.current;
+      stateRef.current = upgradeTower(stateRef.current, tower.id);
+      const upgraded = stateRef.current !== before;
+      const coord = `${colIndexToLetter(command.gridX)}${command.gridY + 1}`;
+      appendPlayerLog(
+        upgraded
+          ? `Ops: ${tower.type} at ${coord} levelled up to ${tower.level + 1}.`
+          : `Ops: cannot upgrade ${tower.type} at ${coord}. Check gold or max level.`,
+        upgraded ? 'success' : 'warning',
+      );
+      setSnapshot({ ...stateRef.current });
+      return;
+    }
+
+    if (command.type === 'scroll') {
+      const delta = (command.direction === 'right' ? 1 : -1) * CELL_SIZE * 8 * command.steps;
+      const currentTarget = voiceScrollTargetRef.current ?? stateRef.current.cameraX;
+      voiceScrollTargetRef.current = Math.max(0, Math.min(MAX_CAM_X, currentTarget + delta));
+      return;
+    }
+
+    if (command.type === 'scrollTo') {
+      voiceScrollTargetRef.current = command.edge === 'start' ? 0 : MAX_CAM_X;
+      return;
+    }
+
+    if (command.type === 'scrollOps') {
+      const el = opsScrollRef.current;
+      if (el) {
+        const amount = 80 * command.steps;
+        el.scrollBy({ top: command.direction === 'down' ? amount : -amount, behavior: 'smooth' });
+      }
+      return;
+    }
+
+    if (command.type === 'scrollOpsTo') {
+      const el = opsScrollRef.current;
+      if (el) {
+        el.scrollTo({ top: command.edge === 'top' ? 0 : el.scrollHeight, behavior: 'smooth' });
+      }
+      return;
+    }
+
+    if (command.type === 'cancel') {
+      appendPlayerLog('Ops: selection cleared.', 'info');
+      handleDeselect();
+    }
+  }, [appendPlayerLog, handleDeselect, handlePause, handleStartMatch]);
+
+  const handleVoiceTranscript = useCallback((transcript: string, matchedCommand: boolean) => {
+    appendPlayerLog(`You: "${transcript}"`, 'info');
+    if (!matchedCommand) {
+      appendPlayerLog('Suggestion: try "build cannon at D 6" or "hero move to H 5".', 'warning');
+    }
+  }, [appendPlayerLog]);
+
+  const voice = useVoiceController(handleVoiceCommand, handleVoiceTranscript);
+
   // Keyboard shortcuts
   useEffect(() => {
     const TOWER_KEYS: Record<string, TowerType> = {
@@ -548,27 +784,117 @@ export default function App() {
   const fitOuterStyle = chromeFit.boxW > 0 && chromeFit.boxH > 0 ? { width: chromeFit.boxW * fitScale, height: chromeFit.boxH * fitScale } : undefined;
 
   return (
-    <div className="w-screen h-screen flex items-center justify-center overflow-hidden min-h-[100dvh]" style={{ background: 'radial-gradient(ellipse at 50% 30%, #0a1220 0%, #050810 100%)' }}>
-      <div className="flex-shrink-0 overflow-hidden rounded-2xl border border-cyber-blue/20 bg-dark-900" style={{ ...(fitOuterStyle ?? {}), ...CHROME_FRAME_STYLE }}>
-        <div ref={gameChromeRef} className={`flex w-full shrink-0 flex-col overflow-hidden ${isGameActive ? 'bg-dark-800' : 'bg-dark-900'}`} style={{ width: CANVAS_W, maxWidth: CANVAS_W, transform: fitScale !== 1 ? `scale(${fitScale})` : undefined, transformOrigin: 'top left' }}>
-          <div className={`relative z-30 flex shrink-0 flex-col ${!isGameActive ? 'border-b border-cyber-blue/20' : ''} ${isGameActive ? 'overflow-visible bg-dark-800' : 'overflow-hidden bg-dark-900'}`} style={{ height: HUD_SLOT_H }}>
-            {isGameActive ? <HUD state={snapshot} perfStats={perfStats} onStartMatch={handleStartMatch} onPause={handlePause} onSetSpeed={handleSetSpeed} /> : <MenuChromeTop />}
+    <div
+      className="w-screen h-screen flex items-center justify-center overflow-hidden min-h-[100dvh]"
+      style={{ background: 'radial-gradient(ellipse at 50% 30%, #0a1220 0%, #050810 100%)' }}
+    >
+      <div
+        className="flex-shrink-0 overflow-hidden rounded-2xl border border-cyber-blue/20 bg-dark-900"
+        style={{ ...(fitOuterStyle ?? {}), ...CHROME_FRAME_STYLE }}
+      >
+        <div
+          ref={gameChromeRef}
+          className={`flex w-full shrink-0 flex-col overflow-hidden ${isGameActive ? 'bg-dark-800' : 'bg-dark-900'}`}
+          style={{
+            width: CANVAS_W,
+            maxWidth: CANVAS_W,
+            transform: fitScale !== 1 ? `scale(${fitScale})` : undefined,
+            transformOrigin: 'top left',
+          }}
+        >
+          {/* Same fixed shell on menu & in-game so scale-to-fit and footprint match */}
+          <div
+            className={`relative z-30 flex shrink-0 flex-col ${
+              !isGameActive ? 'border-b border-cyber-blue/20' : ''
+            } ${isGameActive ? 'overflow-visible bg-dark-800' : 'overflow-hidden bg-dark-900'}`}
+            style={{ height: HUD_SLOT_H }}
+          >
+            {isGameActive ? (
+              <HUD
+                state={snapshot}
+                perfStats={perfStats}
+                voice={voice}
+                playerBattleLog={playerBattleLog}
+                opponentBattleLog={opponentBattleLog}
+                onStartMatch={handleStartMatch}
+                onPause={handlePause}
+                onSetSpeed={handleSetSpeed}
+              />
+            ) : (
+              <MenuChromeTop />
+            )}
           </div>
-          <div className="relative z-10 flex shrink-0 items-stretch" style={{ height: CANVAS_H + FOOTER_H }} onClick={handleOutsideSelectionClick}>
+
+          {/* Main: canvas + shop — shrink-0 so flex parents never squash fixed canvas height */}
+          <div
+            className="relative z-10 flex shrink-0 items-stretch"
+            style={{ height: CANVAS_H + FOOTER_H }}
+            onClick={handleOutsideSelectionClick}
+          >
             <div className="relative flex shrink-0 flex-col" style={{ width: CANVAS_W }}>
+              {/* Isolate overlays to the grid only — inset-0 must not include the footer row */}
               <div className="relative shrink-0 overflow-hidden" style={{ width: CANVAS_W, height: CANVAS_H }}>
-                <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H} onClick={handleCanvasClick} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} onContextMenu={handleCanvasContextMenu} className="block" style={{ cursor: snapshot.selectedTowerType ? 'crosshair' : 'default' }} />
-                <GameOverlay state={snapshot} menuStage={menuStage} onContinueToModeSelect={() => setMenuStage('pick_mode')} onBackToLaunch={() => setMenuStage('launch')} onStart={handleStart} onVersusIntroComplete={handleVersusIntroComplete} onRestart={handleRestart} onResume={handlePause} onMultiplayerStart={handleMultiplayerStart} />
+                <canvas
+                  ref={canvasRef}
+                  width={CANVAS_W}
+                  height={CANVAS_H}
+                  onClick={handleCanvasClick}
+                  onMouseMove={handleMouseMove}
+                  onMouseLeave={handleMouseLeave}
+                  onContextMenu={handleCanvasContextMenu}
+                  className="block"
+                  style={{ cursor: snapshot.selectedTowerType ? 'crosshair' : 'default' }}
+                />
+                <GameOverlay
+                  state={snapshot}
+                  menuStage={menuStage}
+                  onContinueToModeSelect={() => setMenuStage('pick_mode')}
+                  onBackToLaunch={() => setMenuStage('launch')}
+                  onStart={handleStart}
+                  onVersusIntroComplete={handleVersusIntroComplete}
+                  onRestart={handleRestart}
+                  onResume={handlePause}
+                  onMultiplayerStart={handleMultiplayerStart}
+                />
                 {snapshot.phase === 'countdown' && <CountdownOverlay hostName={room?.hostId?.slice(0, 8) ?? 'Host'} guestName={room?.guestId?.slice(0, 8) ?? 'Guest'} onComplete={handleCountdownComplete} />}
               </div>
-              <div className={`relative z-10 shrink-0 overflow-x-auto overflow-y-hidden p-3 [scrollbar-width:thin] ${!isGameActive ? 'border-t border-cyber-blue/20' : ''} ${isGameActive ? 'bg-dark-800' : 'bg-dark-900'}`} style={{ height: FOOTER_H }}>
+
+              <div
+                className={`relative z-10 shrink-0 overflow-x-auto overflow-y-hidden p-3 [scrollbar-width:thin] ${
+                  !isGameActive ? 'border-t border-cyber-blue/20' : ''
+                } ${isGameActive ? 'bg-dark-800' : 'bg-dark-900'}`}
+                style={{ height: FOOTER_H }}
+              >
                 {isGameActive ? (
-                  <div className="grid h-full min-h-0 min-w-0 w-full grid-cols-[1fr_2fr_1fr] gap-3" style={{ minWidth: FOOTER_GRID_MIN_W }}>
-                    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden"><HeroStatus state={snapshot} /></div>
-                    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden"><TowerShopStrip state={snapshot} onSelectTower={handleSelectTower} /></div>
-                    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden"><TowerInspector state={snapshot} onUpgrade={handleUpgrade} onSell={handleSell} onDeselect={handleDeselect} onDeployAttack={handleDeployAttack} /></div>
+                  <div
+                    className="grid h-full min-h-0 min-w-0 w-full grid-cols-[1fr_2fr_1fr] gap-3"
+                    style={{ minWidth: FOOTER_GRID_MIN_W }}
+                  >
+                    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+                      <HeroStatus state={snapshot} />
+                    </div>
+                    <div className="flex min-h-0 min-w-0 flex-col gap-2 overflow-hidden">
+                      <div className="h-[5rem] shrink-0">
+                        <MatchStatusPanel state={snapshot} />
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-hidden">
+                        <TowerShopStrip state={snapshot} onSelectTower={handleSelectTower} />
+                      </div>
+                    </div>
+                    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+                      <TowerInspector
+                        state={snapshot}
+                        onUpgrade={handleUpgrade}
+                        onSell={handleSell}
+                        onDeselect={handleDeselect}
+                        onDeployAttack={handleDeployAttack}
+                        opsScrollRef={opsScrollRef}
+                      />
+                    </div>
                   </div>
-                ) : <MenuChromeFooter />}
+                ) : (
+                  <MenuChromeFooter />
+                )}
               </div>
             </div>
           </div>
