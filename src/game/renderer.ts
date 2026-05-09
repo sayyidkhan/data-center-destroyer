@@ -142,13 +142,14 @@ export function renderGame(
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
   if (state.phase === 'menu') {
-    // Menu backdrop fills the game viewport area (inside the ruler gutters)
+    // Solid frame (no Excel rulers) on launch + mode-select; overlay would crowd the UI.
+    ctx.fillStyle = '#060d1a';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
     ctx.save();
     ctx.translate(RULER_W, RULER_H);
     drawMenuBackdrop(ctx, time);
     ctx.restore();
     ctx.restore();
-    drawExcelCoordinateOverlay(ctx, state.cameraX);
     return;
   }
 
@@ -198,41 +199,6 @@ function drawMenuBackdrop(ctx: CanvasRenderingContext2D, time: number) {
   glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, w, h);
-
-  ctx.save();
-  ctx.strokeStyle = 'rgba(0, 212, 255, 0.045)';
-  ctx.lineWidth = 1;
-  const step = 24;
-  for (let x = 0; x <= w; x += step) {
-    ctx.beginPath();
-    ctx.moveTo(x + 0.5, 0);
-    ctx.lineTo(x + 0.5, h);
-    ctx.stroke();
-  }
-  for (let y = 0; y <= h; y += step) {
-    ctx.beginPath();
-    ctx.moveTo(0, y + 0.5);
-    ctx.lineTo(w, y + 0.5);
-    ctx.stroke();
-  }
-
-  ctx.translate(w / 2, h * 0.62);
-  ctx.scale(1, 0.42);
-  ctx.strokeStyle = 'rgba(0, 212, 255, 0.035)';
-  const gw = w * 0.95;
-  const gh = h * 0.85;
-  for (let i = -6; i <= 6; i++) {
-    const ox = (i * gw) / 14 + Math.sin(time * 0.6 + i * 0.4) * 6;
-    ctx.beginPath();
-    ctx.moveTo(ox - gw / 2, -gh / 2);
-    ctx.lineTo(ox + gw / 2, gh / 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(ox - gw / 2, gh / 2);
-    ctx.lineTo(ox + gw / 2, -gh / 2);
-    ctx.stroke();
-  }
-  ctx.restore();
 
   const shimmer = (Math.sin(time * 1.1) * 0.5 + 0.5) * 0.06 + 0.04;
   const beam = ctx.createLinearGradient(0, h * 0.28, w, h * 0.72);
