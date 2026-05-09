@@ -63,6 +63,10 @@ export default function App() {
 
   const room = useQuery(api.rooms.getRoom as any, roomId ? { roomId } : 'skip');
   const convexGameState = useQuery(api.rooms.getGameState as any, roomId ? { roomId } : 'skip');
+  const opponentActions = useQuery(
+    api.rooms.getActions as any,
+    roomId && playerRole === 'host' ? { roomId, afterTick: tickCounterRef.current - 120 } : 'skip'
+  );
 
   const setThrottledSnapshot = useCallback((s: GameState) => {
     const now = performance.now();
@@ -91,12 +95,30 @@ export default function App() {
 
   const { start, stop } = useGameLoop(stateRef, setThrottledSnapshot, canvasRef, renderFn, setPerfStats, preTickRef);
 
+  // Only start game loop for single-player or host. Guest renders from Convex state.
   useEffect(() => {
+    if (playerRoleRef.current === 'guest') return;
     start();
     return stop;
   }, [start, stop]);
 
-  // ---- HOST: Write state to Convex periodically ----
+  // ---- HOST: Read opponent actions from Convex ----
+  useEffect(() => {
+    if (!opponentActions || opponentActions.length === 0) return;
+    const myRole = playerRoleRef.current;
+    if (myRole !== 'host') return;
+
+    for (const action of opponentActions) {
+      if (action.player === 'host') continue; // skip my own actions
+      pendingActionsRef.current.push({
+        type: action.type,
+        tick: action.tick,
+        ...action.payload,
+      } as GameAction);
+    }
+  }, [opponentActions]);
+
+  // ---- HOST: Write state to Convex after every tick ----
   useEffect(() => {
     if (!roomId || playerRole !== 'host') return;
     if (stateRef.current.phase !== 'playing' && stateRef.current.phase !== 'wave_complete' && stateRef.current.phase !== 'countdown') return;
@@ -104,11 +126,7 @@ export default function App() {
     const id = setInterval(() => {
       if (roomIdRef.current && playerRoleRef.current === 'host') {
         const s = stateRef.current;
-        // Serialize state (strip functions)
-        const serializable = {
-          ...s,
-          random: undefined,
-        };
+        const serializable = { ...s, random: undefined };
         writeGameState({
           roomId: roomIdRef.current,
           state: serializable,
@@ -119,14 +137,18 @@ export default function App() {
     return () => clearInterval(id);
   }, [roomId, playerRole, writeGameState]);
 
-  // ---- GUEST: Read state from Convex and render ----
+  // ---- GUEST: Render-only loop (no local simulation) ----
   useEffect(() => {
     if (!roomId || playerRole !== 'guest') return;
 
-    const renderLoop = () => {
-      if (convexGameState?.state && playerRoleRef.current === 'guest') {
+    let raf = 0;
+    let lastTime = 0;
+    const renderLoop = (time: number) => {
+      if (playerRoleRef.current !== 'guest') return;
+
+      // Read latest state from Convex
+      if (convexGameState?.state) {
         const serverState = convexGameState.state as GameState;
-        // Merge server state with local state, preserving local player slot
         const merged: GameState = {
           ...serverState,
           playerSlot: stateRef.current.playerSlot,
@@ -136,13 +158,21 @@ export default function App() {
         stateRef.current = merged;
         setSnapshot({ ...merged });
       }
-      guestRafRef.current = requestAnimationFrame(renderLoop);
+
+      // Render directly (bypass useGameLoop)
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          renderGame(ctx, stateRef.current, hoveredCellRef.current, time / 1000);
+        }
+      }
+
+      raf = requestAnimationFrame(renderLoop);
     };
 
-    guestRafRef.current = requestAnimationFrame(renderLoop);
-    return () => {
-      if (guestRafRef.current) cancelAnimationFrame(guestRafRef.current);
-    };
+    raf = requestAnimationFrame(renderLoop);
+    return () => { if (raf) cancelAnimationFrame(raf); };
   }, [roomId, playerRole, convexGameState]);
 
   // ---- Action sync ----
