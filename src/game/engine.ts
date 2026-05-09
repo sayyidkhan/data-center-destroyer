@@ -103,7 +103,7 @@ function createHero(id: string, start: Vec2): Hero {
   };
 }
 
-export function createInitialState(roomSeed: number = 1, playerId: string = 'single'): GameState {
+export function createInitialState(roomSeed: number = 1, playerId: string = 'single', playerSlot: 1 | 2 = 2): GameState {
   resetUidCounter(roomSeed);
   const random = createSeededRandom(roomSeed);
   const path = buildPath();
@@ -112,7 +112,12 @@ export function createInitialState(roomSeed: number = 1, playerId: string = 'sin
   const attackCooldowns = Object.fromEntries(
     (Object.keys(ATTACK_PACKAGE_DEFS) as AttackPackageId[]).map(id => [id, 0])
   ) as Record<AttackPackageId, number>;
-  // Start camera showing the data center (left side of map)
+
+  // Player slot 1 = right side, Player slot 2 = left side
+  const myStart = playerSlot === 1 ? OPPONENT_HERO_START : HERO_START;
+  const theirStart = playerSlot === 1 ? HERO_START : OPPONENT_HERO_START;
+  const cameraStart = playerSlot === 1 ? MAP_W - VIEWPORT_W : 0;
+
   return {
     phase: 'menu',
     gameMode: null,
@@ -133,8 +138,8 @@ export function createInitialState(roomSeed: number = 1, playerId: string = 'sin
     gold: STARTING_GOLD,
     score: 0,
     towers: createEnemyTowers(),
-    hero: createHero('hero', HERO_START),
-    opponentHero: createHero('opponent_hero', OPPONENT_HERO_START),
+    hero: createHero('hero', myStart),
+    opponentHero: createHero('opponent_hero', theirStart),
     enemies: [],
     projectiles: [],
     particles: [],
@@ -151,11 +156,12 @@ export function createInitialState(roomSeed: number = 1, playerId: string = 'sin
     gameSpeed: 1,
     totalKills: 0,
     totalGoldEarned: STARTING_GOLD,
-    cameraX: 0,
+    cameraX: cameraStart,
     roomSeed,
     random,
     playerId,
     opponentCursor: null,
+    playerSlot,
   };
 }
 
@@ -182,7 +188,7 @@ export function placeTower(state: GameState, gridX: number, gridY: number, type:
   const def = TOWER_DEFS[type];
   if (state.gold < def.cost) return state;
   if (gridX < 0 || gridX >= GRID_COLS || gridY < 0 || gridY >= GRID_ROWS) return state;
-  if (!isPlayerBuildableCell(gridX)) return state;
+  if (!isPlayerBuildableCell(gridX, state.playerSlot)) return state;
   if (state.grid[gridY][gridX] !== 'empty') return state;
 
   const newGrid = state.grid.map(row => [...row]);

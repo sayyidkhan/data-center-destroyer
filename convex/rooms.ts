@@ -290,3 +290,46 @@ export const cleanupStaleRooms = mutation({
     return true;
   },
 });
+
+// ---- Game State (real-time environment store) ----
+
+export const writeGameState = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    state: v.any(),
+    tick: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("gameStates")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        state: args.state,
+        tick: args.tick,
+        updatedAt: Date.now(),
+      });
+    } else {
+      await ctx.db.insert("gameStates", {
+        roomId: args.roomId,
+        state: args.state,
+        tick: args.tick,
+        updatedAt: Date.now(),
+      });
+    }
+
+    return true;
+  },
+});
+
+export const getGameState = query({
+  args: { roomId: v.id("rooms") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("gameStates")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+      .first();
+  },
+});

@@ -29,9 +29,16 @@ export default defineSchema({
     winner: v.optional(v.union(v.literal("host"), v.literal("guest"))),
     roomSeed: v.number(),
     isPublic: v.optional(v.boolean()),
-    joinRequests: v.optional(v.array(v.string())), // guestIds requesting to join
+    joinRequests: v.optional(v.array(v.string())),
   })
     .index("by_code", ["code"])
-    .index("by_status", ["status"])
-    .index("by_public", ["isPublic", "status"]),
+    .index("by_status", ["status"]),
+
+  gameStates: defineTable({
+    roomId: v.id("rooms"),
+    state: v.any(), // serialized GameState
+    tick: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_room", ["roomId"]),
 });

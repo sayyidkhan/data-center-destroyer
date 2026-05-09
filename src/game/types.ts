@@ -177,6 +177,7 @@ export interface GameState {
   random: () => number;
   playerId: string;
   opponentCursor: { x: number; y: number } | null;
+  playerSlot: 1 | 2; // 1 = right side, 2 = left side
 }
 
 export interface EnemyConfig {
