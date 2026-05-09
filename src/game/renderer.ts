@@ -142,13 +142,14 @@ export function renderGame(
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
   if (state.phase === 'menu') {
-    // Menu backdrop fills the game viewport area (inside the ruler gutters)
+    // Solid frame (no Excel rulers) on launch + mode-select; overlay would crowd the UI.
+    ctx.fillStyle = '#060d1a';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
     ctx.save();
     ctx.translate(RULER_W, RULER_H);
     drawMenuBackdrop(ctx, time);
     ctx.restore();
     ctx.restore();
-    drawExcelCoordinateOverlay(ctx, state.cameraX);
     return;
   }
 
@@ -198,41 +199,6 @@ function drawMenuBackdrop(ctx: CanvasRenderingContext2D, time: number) {
   glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, w, h);
-
-  ctx.save();
-  ctx.strokeStyle = 'rgba(0, 212, 255, 0.045)';
-  ctx.lineWidth = 1;
-  const step = 24;
-  for (let x = 0; x <= w; x += step) {
-    ctx.beginPath();
-    ctx.moveTo(x + 0.5, 0);
-    ctx.lineTo(x + 0.5, h);
-    ctx.stroke();
-  }
-  for (let y = 0; y <= h; y += step) {
-    ctx.beginPath();
-    ctx.moveTo(0, y + 0.5);
-    ctx.lineTo(w, y + 0.5);
-    ctx.stroke();
-  }
-
-  ctx.translate(w / 2, h * 0.62);
-  ctx.scale(1, 0.42);
-  ctx.strokeStyle = 'rgba(0, 212, 255, 0.035)';
-  const gw = w * 0.95;
-  const gh = h * 0.85;
-  for (let i = -6; i <= 6; i++) {
-    const ox = (i * gw) / 14 + Math.sin(time * 0.6 + i * 0.4) * 6;
-    ctx.beginPath();
-    ctx.moveTo(ox - gw / 2, -gh / 2);
-    ctx.lineTo(ox + gw / 2, gh / 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(ox - gw / 2, gh / 2);
-    ctx.lineTo(ox + gw / 2, -gh / 2);
-    ctx.stroke();
-  }
-  ctx.restore();
 
   const shimmer = (Math.sin(time * 1.1) * 0.5 + 0.5) * 0.06 + 0.04;
   const beam = ctx.createLinearGradient(0, h * 0.28, w, h * 0.72);
@@ -1538,6 +1504,7 @@ function drawLaserBeams(ctx: CanvasRenderingContext2D, state: GameState, time: n
 }
 
 function drawEffects(ctx: CanvasRenderingContext2D, effects: VisualEffect[], time: number) {
+  ctx.save();
   for (const effect of effects) {
     if (effect.type === 'lightning_zap') {
       const fade = effect.life / effect.maxLife;
@@ -1612,61 +1579,160 @@ function drawEffects(ctx: CanvasRenderingContext2D, effects: VisualEffect[], tim
       }
 
       ctx.restore();
-      continue;
-    }
 
-    if (effect.type !== 'frost_blast') continue;
+    } else if (effect.type === 'frost_blast') {
+      const progress = 1 - effect.life / effect.maxLife;
+      const fade = effect.life / effect.maxLife;
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const radius = effect.radius * eased;
 
-    const progress = 1 - effect.life / effect.maxLife;
-    const fade = effect.life / effect.maxLife;
-    const eased = 1 - Math.pow(1 - progress, 3);
-    const radius = effect.radius * eased;
+      ctx.save();
+      ctx.translate(effect.x, effect.y);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
 
-    ctx.save();
-    ctx.translate(effect.x, effect.y);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    const haze = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-    haze.addColorStop(0, `rgba(224, 247, 250, ${0.24 * fade})`);
-    haze.addColorStop(0.48, `rgba(128, 222, 234, ${0.12 * fade})`);
-    haze.addColorStop(1, 'rgba(128, 222, 234, 0)');
-    ctx.fillStyle = haze;
-    ctx.beginPath();
-    ctx.arc(0, 0, radius, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.strokeStyle = `rgba(178, 235, 242, ${0.86 * fade})`;
-    ctx.shadowColor = '#80deea';
-    ctx.shadowBlur = 18 * fade;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(0, 0, radius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.strokeStyle = `rgba(255, 255, 255, ${0.55 * fade})`;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([8, 8]);
-    ctx.lineDashOffset = -time * 42;
-    ctx.beginPath();
-    ctx.arc(0, 0, radius * 0.72, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    for (let i = 0; i < 12; i++) {
-      const angle = (Math.PI * 2 * i) / 12 + time * 0.6;
-      const inner = radius * 0.24;
-      const outer = radius * (0.54 + 0.08 * Math.sin(time * 8 + i));
-      ctx.strokeStyle = `rgba(224, 247, 250, ${0.42 * fade})`;
-      ctx.lineWidth = 1.2;
+      const haze = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+      haze.addColorStop(0, `rgba(224, 247, 250, ${0.24 * fade})`);
+      haze.addColorStop(0.48, `rgba(128, 222, 234, ${0.12 * fade})`);
+      haze.addColorStop(1, 'rgba(128, 222, 234, 0)');
+      ctx.fillStyle = haze;
       ctx.beginPath();
-      ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
-      ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
-      ctx.stroke();
-    }
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.fill();
 
-    ctx.restore();
+      ctx.strokeStyle = `rgba(178, 235, 242, ${0.86 * fade})`;
+      ctx.shadowColor = '#80deea';
+      ctx.shadowBlur = 18 * fade;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.55 * fade})`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 8]);
+      ctx.lineDashOffset = -time * 42;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 0.72, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      for (let i = 0; i < 12; i++) {
+        const angle = (Math.PI * 2 * i) / 12 + time * 0.6;
+        const inner = radius * 0.24;
+        const outer = radius * (0.54 + 0.08 * Math.sin(time * 8 + i));
+        ctx.strokeStyle = `rgba(224, 247, 250, ${0.42 * fade})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
+        ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+
+    } else if (effect.type === 'tower_spawn') {
+      // ── clean expanding ring + brief fill flash ─────────────────────────
+      const t = 1 - effect.life / effect.maxLife; // 0→1
+
+      ctx.save();
+      ctx.translate(effect.x, effect.y);
+      ctx.shadowBlur = 0;
+
+      // Two staggered expanding rings
+      for (let ring = 0; ring < 2; ring++) {
+        const rt = Math.max(0, t - ring * 0.2);
+        if (rt <= 0) continue;
+        const ringR  = rt * CELL_SIZE * 1.4;
+        const alpha  = Math.max(0, (1 - rt) * (1 - ring * 0.4));
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = effect.color;
+        ctx.lineWidth   = 1.5 - ring * 0.4;
+        ctx.beginPath();
+        ctx.arc(0, 0, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Brief bright fill at the very start (first 25% of animation)
+      const flashT = Math.max(0, 1 - t * 4);
+      if (flashT > 0) {
+        const fillGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, CELL_SIZE * 0.5);
+        fillGrad.addColorStop(0,   effect.color + 'cc');
+        fillGrad.addColorStop(0.5, effect.color + '55');
+        fillGrad.addColorStop(1,   effect.color + '00');
+        ctx.globalAlpha = flashT * 0.7;
+        ctx.fillStyle   = fillGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, CELL_SIZE * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = 1;
+      ctx.restore();
+
+    } else if (effect.type === 'tower_death') {
+      // ── shockwave ring + debris spokes ──────────────────────────────────
+      const t = 1 - effect.life / effect.maxLife; // 0→1
+
+      ctx.save();
+      ctx.translate(effect.x, effect.y);
+      ctx.shadowBlur = 0;
+
+      // Main shockwave ring
+      const shockAlpha = Math.max(0, 1 - t);
+      ctx.globalAlpha  = shockAlpha * 0.85;
+      ctx.strokeStyle  = effect.color;
+      ctx.lineWidth    = Math.max(0.5, 3.5 * (1 - t));
+      ctx.beginPath();
+      ctx.arc(0, 0, t * CELL_SIZE * 2, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Trailing white ring offset by 15%
+      const trail = Math.max(0, t - 0.15);
+      ctx.globalAlpha = Math.max(0, (1 - trail) * 0.4);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth   = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, trail * CELL_SIZE * 2, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Radial fill flash in first 30% of animation
+      const innerFade = Math.max(0, 1 - t * 3.3);
+      if (innerFade > 0) {
+        const fillGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, CELL_SIZE * 0.55);
+        fillGrad.addColorStop(0, effect.color + 'aa');
+        fillGrad.addColorStop(1, effect.color + '00');
+        ctx.globalAlpha = innerFade * 0.5;
+        ctx.fillStyle   = fillGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, CELL_SIZE * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 8 debris spokes radiating outward
+      const spokeAlpha = Math.max(0, (1 - t * 1.4) * 0.65);
+      if (spokeAlpha > 0) {
+        ctx.globalAlpha = spokeAlpha;
+        ctx.strokeStyle = effect.color;
+        ctx.lineWidth   = 1.2;
+        for (let s = 0; s < 8; s++) {
+          const angle = (s / 8) * Math.PI * 2 + t * 0.5;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(angle) * t * CELL_SIZE * 0.4, Math.sin(angle) * t * CELL_SIZE * 0.4);
+          ctx.lineTo(Math.cos(angle) * t * CELL_SIZE * 1.3, Math.sin(angle) * t * CELL_SIZE * 1.3);
+          ctx.stroke();
+        }
+      }
+
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
   }
+  // Ensure shadow never leaks into subsequent draw calls
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = 'transparent';
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 function drawParticles(ctx: CanvasRenderingContext2D, particles: Particle[], cameraX: number) {

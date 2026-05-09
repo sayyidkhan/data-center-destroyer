@@ -1,65 +1,36 @@
-import React from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import type { VoicePhase } from '../hooks/useVoiceController';
 import type { GameState } from '../game/types';
 import { formatCompactCount } from '../formatCompactCount';
 import type { PerfStats } from '../hooks/useGameLoop';
 
+export interface BattleLogEntry {
+  id: number;
+  text: string;
+  createdAt?: number;
+  tone?: 'normal' | 'info' | 'success' | 'warning' | 'danger';
+}
+
 interface HUDProps {
   state: GameState;
   perfStats: PerfStats;
+  voice: {
+    isListening: boolean;
+    isSupported: boolean;
+    liveTranscript: string;
+    lastTranscript: string;
+    lastError: string | null;
+    audioLevel: number;
+    voicePhase: VoicePhase;
+    startListening: () => void;
+    stopListening: () => void;
+  };
+  playerBattleLog: BattleLogEntry[];
+  opponentBattleLog: BattleLogEntry[];
   onStartMatch: () => void;
   onPause: () => void;
   onSetSpeed: (speed: number) => void;
-}
-
-function HudStatLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="font-mono text-xs font-semibold uppercase tracking-wide text-white/55">{children}</span>
-  );
-}
-
-function LivesRing({ value, max, pct, color }: { value: number; max: number; pct: number; color: string }) {
-  const size = 40;
-  const stroke = 3;
-  const r = (size - stroke) / 2 - 0.5;
-  const c = 2 * Math.PI * r;
-  const filled = (Math.min(100, Math.max(0, pct)) / 100) * c;
-
-  return (
-    <div
-      className="relative h-10 w-10 shrink-0"
-      title={`${value} / ${max} HP`}
-      aria-label={`Base HP ${value} of ${max}`}
-    >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90" aria-hidden>
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          fill="none"
-          className="stroke-dark-600"
-          strokeWidth={stroke}
-        />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          fill="none"
-          stroke={color}
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={`${filled} ${c}`}
-          className="transition-[stroke-dasharray] duration-300"
-          style={{ filter: `drop-shadow(0 0 3px ${color})` }}
-        />
-      </svg>
-      <span
-        className="absolute inset-0 flex items-center justify-center font-mono text-sm font-bold leading-none tabular-nums"
-        style={{ color }}
-      >
-        {value}
-      </span>
-    </div>
-  );
 }
 
 function MatchSide({ label, hp, maxHp, pct, heroLabel, heroAlive, heroHp, heroMaxHp, heroRespawnTimer, heroPct, tone }: {
@@ -117,10 +88,396 @@ function PerfReadout({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function HUD({ state, perfStats, onStartMatch, onPause, onSetSpeed }: HUDProps) {
-  const [showPerfStats, setShowPerfStats] = React.useState(false);
+function CompactStat({ label, value, tone, prefix }: { label: string; value: string; tone: string; prefix?: string }) {
+  return (
+    <div className="flex min-w-0 flex-col justify-center gap-1 rounded-md bg-dark-900/45 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
+      <span className="truncate font-mono text-[10px] font-bold uppercase leading-none tracking-wide text-white/42">
+        {label}
+      </span>
+      <span className={`whitespace-nowrap font-mono text-base font-black leading-none tabular-nums ${tone}`}>
+        {prefix ? <span className="mr-0.5 opacity-80">{prefix}</span> : null}
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// Phase config — colours and labels for each voice state
+const PHASE_CONFIG: Record<VoicePhase, { color: string; glow: string; label: string; barColor: string }> = {
+  idle:       { color: '#60a5fa', glow: 'rgba(96,165,250,0.3)',   label: 'TAP TO SPEAK',  barColor: '#60a5fa' },
+  listening:  { color: '#00d4ff', glow: 'rgba(0,212,255,0.35)',   label: 'READY',         barColor: '#00d4ff' },
+  hearing:    { color: '#00ff88', glow: 'rgba(0,255,136,0.5)',    label: 'HEARING',       barColor: '#00ff88' },
+  processing: { color: '#f59e0b', glow: 'rgba(245,158,11,0.45)', label: 'PROCESSING…',   barColor: '#f59e0b' },
+  done:       { color: '#00ff88', glow: 'rgba(0,255,136,0.6)',    label: 'GOT IT',        barColor: '#00ff88' },
+};
+
+const NUM_BARS = 7;
+
+function VoicePanel({ voice }: { voice: HUDProps['voice'] }) {
+  const phase = voice.isListening ? voice.voicePhase : 'idle';
+  const cfg = PHASE_CONFIG[phase];
+  const level = voice.audioLevel;
+
+  const tickRef = useRef(0);
+  const [bars, setBars] = useState<number[]>(Array(NUM_BARS).fill(0.15));
+
+  useEffect(() => {
+    let raf = 0;
+    const animate = (t: number) => {
+      tickRef.current = t;
+      setBars(prev => prev.map((_, i) => {
+        if (phase === 'hearing') {
+          const jitter = Math.sin(t * 0.012 + i * 1.3) * 0.18;
+          return Math.max(0.08, Math.min(1, level + jitter));
+        }
+        if (phase === 'processing') {
+          const wave = Math.abs(Math.sin(t * 0.004 + i * 0.7));
+          return 0.2 + wave * 0.6;
+        }
+        if (phase === 'listening') {
+          const pulse = Math.abs(Math.sin(t * 0.0018 + i * 0.9)) * 0.25;
+          return 0.08 + pulse;
+        }
+        if (phase === 'done') return 1;
+        return 0.06;
+      }));
+      raf = requestAnimationFrame(animate);
+    };
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
+  }, [phase, level]);
+
+  const transcript = voice.liveTranscript || voice.lastTranscript;
+  const title = voice.lastError ? voice.lastError : transcript ? `Heard: ${transcript}` : 'Click to start voice control';
+
+  return (
+    <div className="relative h-full shrink-0">
+      <button
+        type="button"
+        onClick={voice.isListening ? voice.stopListening : voice.startListening}
+        disabled={!voice.isSupported}
+        title={title}
+        aria-label={voice.isListening ? 'Stop voice control' : 'Start voice control'}
+        style={{
+          borderColor: voice.isListening ? cfg.color + '99' : undefined,
+          boxShadow: voice.isListening ? `0 0 16px ${cfg.glow}, inset 0 0 12px ${cfg.glow}` : undefined,
+          background: voice.isListening ? `linear-gradient(180deg, ${cfg.color}12 0%, ${cfg.color}06 100%)` : undefined,
+        }}
+        className={`relative flex h-full min-h-[4rem] w-14 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border transition-all duration-300 focus-visible:outline-none active:scale-95 overflow-hidden ${
+          voice.isListening
+            ? 'border-transparent'
+            : voice.isSupported
+              ? 'border-cyber-blue/25 bg-dark-900/55 text-cyber-blue hover:border-cyber-blue/45 hover:bg-dark-700/80'
+              : 'cursor-not-allowed border-white/10 bg-dark-900/45 text-white/25'
+        }`}
+      >
+        {/* Animated waveform bars */}
+        <div className="flex items-end gap-[2px]" style={{ height: 22 }}>
+          {bars.map((h, i) => (
+            <div
+              key={i}
+              style={{
+                width: 3,
+                height: `${Math.round(h * 22)}px`,
+                background: voice.isListening ? cfg.barColor : '#ffffff33',
+                borderRadius: 2,
+                transition: phase === 'done' ? 'height 80ms ease-out' : 'height 60ms ease-out',
+                boxShadow: voice.isListening && h > 0.4 ? `0 0 4px ${cfg.barColor}` : undefined,
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Phase label */}
+        <span
+          style={{ color: voice.isListening ? cfg.color : undefined, fontSize: 8 }}
+          className={`font-mono font-black uppercase leading-none tracking-wider transition-colors duration-300 ${
+            voice.isListening ? '' : 'text-white/25'
+          }`}
+        >
+          {voice.isListening ? cfg.label : voice.isSupported ? 'VOICE' : 'N/A'}
+        </span>
+
+        {/* Status dot */}
+        <span
+          style={{
+            background: voice.isListening ? cfg.color : undefined,
+            boxShadow: voice.isListening ? `0 0 6px ${cfg.color}` : undefined,
+          }}
+          className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full transition-all duration-300 ${
+            !voice.isListening ? (voice.isSupported ? 'bg-white/20' : 'bg-red-400/60') : ''
+          } ${phase === 'hearing' ? 'animate-ping' : ''}`}
+        />
+
+        {/* Processing spinner ring */}
+        {phase === 'processing' && (
+          <div
+            className="pointer-events-none absolute inset-0 rounded-lg"
+            style={{
+              background: `conic-gradient(${cfg.color}55 0deg, transparent 200deg)`,
+              animation: 'spin 0.9s linear infinite',
+            }}
+          />
+        )}
+      </button>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+function ChatLogLine({ entry, align = 'left' }: { entry: BattleLogEntry; align?: 'left' | 'right' }) {
+  const toneClass =
+    entry.tone === 'success'
+      ? 'border-cyber-green/25 bg-cyber-green/[0.08] text-cyber-green'
+      : entry.tone === 'warning'
+        ? 'border-yellow-300/20 bg-yellow-300/[0.07] text-yellow-200'
+        : entry.tone === 'danger'
+          ? 'border-red-300/25 bg-red-400/[0.08] text-red-200'
+          : entry.tone === 'info'
+            ? 'border-cyber-blue/22 bg-cyber-blue/[0.07] text-cyber-blue'
+            : 'border-white/[0.08] bg-dark-700/55 text-white/68';
+
+  const timestamp = typeof entry.createdAt === 'number' && Number.isFinite(entry.createdAt)
+    ? entry.createdAt
+    : Date.now();
+  const time = new Date(timestamp).toLocaleString([], {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
+  return (
+    <div className={`flex ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-full rounded-md border px-2 py-1 font-mono leading-tight ${toneClass}`}>
+        <div className={`mb-0.5 text-[9px] font-black leading-none text-white/32 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+          {time}
+        </div>
+        <div className="text-[11px] font-bold leading-tight">
+          {entry.text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChatLogOverlay({
+  title,
+  entries,
+  tone,
+  align,
+  anchorRect,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  title: string;
+  entries: BattleLogEntry[];
+  tone: 'player' | 'opponent';
+  align: 'left' | 'right';
+  anchorRect: DOMRect;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}) {
+  const isPlayer = tone === 'player';
+  const OVERLAY_W = 420;
+
+  // Position: sit just below the anchor panel, aligned to its left or right edge
+  const top = anchorRect.bottom + 8; // 8px gap below the panel
+  const left = isPlayer
+    ? anchorRect.left
+    : Math.max(0, anchorRect.right - OVERLAY_W);
+
+  const toneClassFor = (t: BattleLogEntry['tone']) =>
+    t === 'success' ? 'border-cyber-green/30 bg-cyber-green/[0.09] text-cyber-green' :
+    t === 'warning'  ? 'border-yellow-300/25 bg-yellow-300/[0.08] text-yellow-200' :
+    t === 'danger'   ? 'border-red-300/30 bg-red-400/[0.09] text-red-200' :
+    t === 'info'     ? 'border-cyber-blue/25 bg-cyber-blue/[0.08] text-cyber-blue' :
+                       'border-white/10 bg-dark-700/60 text-white/75';
+
+  return createPortal(
+    <div
+      style={{ position: 'fixed', top, left, width: OVERLAY_W, zIndex: 9999 }}
+      className={`flex flex-col gap-2 rounded-xl border p-4 shadow-[0_24px_60px_rgba(0,0,0,0.75),0_0_30px_rgba(0,0,0,0.5)] backdrop-blur-md ${
+        isPlayer ? 'border-cyber-blue/30 bg-dark-900/97' : 'border-red-300/25 bg-dark-900/97'
+      }`}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      {/* Overlay header */}
+      <div className={`flex items-center justify-between border-b pb-2 ${isPlayer ? 'border-cyber-blue/15' : 'border-red-300/15'}`}>
+        <span className={`font-mono text-xs font-black uppercase tracking-[0.18em] ${isPlayer ? 'text-cyber-blue' : 'text-red-300'}`}>
+          {title}
+        </span>
+        <span className="font-mono text-[10px] text-white/35">{entries.length} entries</span>
+      </div>
+
+      {/* Scrollable log */}
+      <div className="flex max-h-80 flex-col gap-1.5 overflow-y-auto overflow-x-hidden pr-1 [scrollbar-width:thin]">
+        {entries.length === 0 ? (
+          <p className="py-6 text-center font-mono text-xs text-white/25">No messages yet</p>
+        ) : (
+          entries.map(entry => {
+            const ts = typeof entry.createdAt === 'number' && Number.isFinite(entry.createdAt) ? entry.createdAt : Date.now();
+            const time = new Date(ts).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return (
+              <div key={entry.id} className={`flex ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-full rounded-lg border px-3 py-1.5 font-mono ${toneClassFor(entry.tone)}`}>
+                  <div className={`mb-0.5 text-[9px] font-black leading-none text-white/30 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+                    {time}
+                  </div>
+                  <div className="text-xs font-bold leading-snug">{entry.text}</div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ChatLogPanel({
+  title,
+  entries,
+  liveEntry,
+  tone,
+  align = 'left',
+  active = false,
+}: {
+  title: string;
+  entries: BattleLogEntry[];
+  liveEntry?: BattleLogEntry | null;
+  tone: 'player' | 'opponent';
+  align?: 'left' | 'right';
+  active?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPlayer = tone === 'player';
+
+  const visibleEntries = [
+    ...(liveEntry ? [liveEntry] : []),
+    ...entries,
+  ].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0) || b.id - a.id);
+
+  const show = useCallback(() => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    if (sectionRef.current) setAnchorRect(sectionRef.current.getBoundingClientRect());
+    setExpanded(true);
+  }, []);
+
+  const hide = useCallback(() => {
+    hideTimerRef.current = setTimeout(() => setExpanded(false), 150);
+  }, []);
+
+  // Keep anchorRect fresh while overlay is open (handles window resize / scroll)
+  useEffect(() => {
+    if (!expanded) return;
+    const update = () => {
+      if (sectionRef.current) setAnchorRect(sectionRef.current.getBoundingClientRect());
+    };
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [expanded]);
+
+  return (
+    <section
+      ref={sectionRef}
+      className={`relative flex min-h-0 min-w-0 flex-col gap-1 rounded-lg border px-3 py-2 ${
+        isPlayer ? 'border-cyber-blue/15 bg-dark-900/35' : 'border-red-300/15 bg-red-500/[0.055]'
+      }`}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+    >
+      {/* Header */}
+      <div className="flex cursor-default items-center justify-between gap-2">
+        <span className={`font-mono text-[10px] font-black uppercase leading-none tracking-[0.18em] ${
+          isPlayer ? 'text-cyber-blue/70' : 'text-red-200/70'
+        }`}>
+          {title}
+        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-[8px] text-white/20">↓ hover</span>
+          <span className={`h-1.5 w-1.5 rounded-full ${
+            active
+              ? isPlayer
+                ? 'bg-cyber-green shadow-[0_0_8px_rgba(0,255,136,0.7)]'
+                : 'bg-red-300 shadow-[0_0_8px_rgba(248,113,113,0.65)]'
+              : 'bg-white/20'
+          }`} />
+        </div>
+      </div>
+
+      {/* Compact in-panel log */}
+      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden pr-1 [scrollbar-width:thin]">
+        {visibleEntries.map(entry => (
+          <ChatLogLine key={entry.id} entry={entry} align={align} />
+        ))}
+      </div>
+
+      {/* Portal overlay */}
+      {expanded && anchorRect && (
+        <ChatLogOverlay
+          title={title}
+          entries={visibleEntries}
+          tone={tone}
+          align={align}
+          anchorRect={anchorRect}
+          onMouseEnter={show}
+          onMouseLeave={hide}
+        />
+      )}
+    </section>
+  );
+}
+
+function BattleLogsPanel({
+  state,
+  voice,
+  playerBattleLog,
+  opponentBattleLog,
+}: {
+  state: GameState;
+  voice: HUDProps['voice'];
+  playerBattleLog: BattleLogEntry[];
+  opponentBattleLog: BattleLogEntry[];
+}) {
+  const liveTranscript = voice.lastError
+    ? { id: -2, text: `Voice error: ${voice.lastError}`, createdAt: Date.now(), tone: 'danger' as const }
+    : voice.liveTranscript
+      ? { id: -1, text: `Hearing: "${voice.liveTranscript}"`, createdAt: Date.now(), tone: 'info' as const }
+      : null;
+
+  return (
+    <div className="grid h-full min-h-0 min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 overflow-hidden px-1">
+      <ChatLogPanel
+        title="User Comms"
+        entries={playerBattleLog}
+        liveEntry={liveTranscript}
+        tone="player"
+        active={voice.isListening}
+      />
+      <div className="flex min-h-0 items-stretch">
+        <VoicePanel voice={voice} />
+      </div>
+      <ChatLogPanel
+        title="Opponent Comms"
+        entries={opponentBattleLog}
+        tone="opponent"
+        align="right"
+        active={state.phase === 'playing'}
+      />
+    </div>
+  );
+}
+
+export function MatchStatusPanel({ state }: { state: GameState }) {
   const livesPct = (state.playerBaseHp / state.maxPlayerBaseHp) * 100;
-  const livesColor = livesPct > 60 ? '#00ff88' : livesPct > 30 ? '#ffcc00' : '#ff4444';
   const opponentPct = (state.opponentBaseHp / state.maxOpponentBaseHp) * 100;
   const heroPct = (state.hero.hp / state.hero.maxHp) * 100;
   const opponentHeroPct = (state.opponentHero.hp / state.opponentHero.maxHp) * 100;
@@ -128,6 +485,76 @@ export function HUD({ state, perfStats, onStartMatch, onPause, onSetSpeed }: HUD
   const opponentTowerCount = state.towers.filter(tower => tower.owner === 'opponent').length;
   const playerAttackers = state.enemies.filter(enemy => enemy.owner === 'player').length;
   const opponentAttackers = state.enemies.filter(enemy => enemy.owner === 'opponent').length;
+
+  return (
+    <div
+      className="box-border flex h-full min-h-0 w-full min-w-0 flex-col justify-center gap-1 overflow-hidden rounded-xl border border-solid border-cyber-green/35 bg-cyber-green/[0.08] px-2.5 py-1.5 shadow-[0_8px_26px_rgba(0,0,0,0.35),0_0_14px_rgba(0,255,136,0.08)] sm:px-3"
+      style={{ backgroundClip: 'padding-box' }}
+    >
+      <div className="flex min-h-0 w-full min-w-0 max-w-full flex-nowrap items-center justify-between gap-x-2 border-b border-solid border-white/[0.09] pb-1 sm:gap-x-3">
+        <div className="flex min-h-0 min-w-0 flex-1 items-center gap-x-2 overflow-hidden">
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full sm:h-2.5 sm:w-2.5 ${
+              state.phase === 'playing' ? 'animate-pulse bg-cyber-green' : 'bg-cyber-green/75'
+            }`}
+          />
+          <span className="min-w-0 truncate font-mono text-xs font-black uppercase leading-none tracking-wide text-cyber-green sm:text-sm">
+            {state.phase === 'paused'
+              ? 'PVP · PAUSED'
+              : state.phase === 'playing'
+                ? 'PVP · LIVE'
+                : state.phase === 'wave_complete' || state.phase === 'menu'
+                  ? 'PVP · READY'
+                  : state.phase === 'victory'
+                    ? 'PVP · VICTORY'
+                    : state.phase === 'game_over'
+                      ? 'PVP · DEFEAT'
+                      : 'Ready'}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-3 text-right font-mono text-[11px] tabular-nums text-white/65">
+          <span>Units {playerAttackers}/{opponentAttackers}</span>
+          <span>Towers {playerTowerCount}/{opponentTowerCount}</span>
+        </div>
+      </div>
+
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+        <MatchSide
+          label="Your Core"
+          hp={state.playerBaseHp}
+          maxHp={state.maxPlayerBaseHp}
+          pct={livesPct}
+          heroLabel="Hero"
+          heroAlive={state.hero.isAlive}
+          heroHp={state.hero.hp}
+          heroMaxHp={state.hero.maxHp}
+          heroRespawnTimer={state.hero.respawnTimer}
+          heroPct={heroPct}
+          tone="blue"
+        />
+        <div className="font-mono text-xs font-black tracking-wide text-white/40">VS</div>
+        <MatchSide
+          label="Enemy Core"
+          hp={state.opponentBaseHp}
+          maxHp={state.maxOpponentBaseHp}
+          pct={opponentPct}
+          heroLabel="Hero"
+          heroAlive={state.opponentHero.isAlive}
+          heroHp={state.opponentHero.hp}
+          heroMaxHp={state.opponentHero.maxHp}
+          heroRespawnTimer={state.opponentHero.respawnTimer}
+          heroPct={opponentHeroPct}
+          tone="red"
+        />
+      </div>
+    </div>
+  );
+}
+
+export function HUD({ state, perfStats, voice, playerBattleLog, opponentBattleLog, onStartMatch, onPause, onSetSpeed }: HUDProps) {
+  const [showPerfStats, setShowPerfStats] = React.useState(false);
+  const livesPct = (state.playerBaseHp / state.maxPlayerBaseHp) * 100;
+  const livesColor = livesPct > 60 ? '#00ff88' : livesPct > 30 ? '#ffcc00' : '#ff4444';
   const controlsEnabled = state.gameMode !== 'multi_player';
   const fpsTone =
     perfStats.fps >= 55
@@ -166,109 +593,20 @@ export function HUD({ state, perfStats, onStartMatch, onPause, onSetSpeed }: HUD
 
   return (
     <div className="relative grid h-full min-h-0 min-w-0 w-full grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] items-center gap-x-3 overflow-visible bg-dark-800 px-3 py-3 select-none">
-      {/* Left — resource strip (must clamp to viewport: w-max/chrome used to widen past VIEWPORT_W) */}
-      <div className="flex min-h-0 min-w-0 max-h-full w-full items-center self-center overflow-hidden border-r border-white/[0.07] pr-2">
-        <div className="flex min-w-0 w-full max-w-full items-stretch overflow-hidden">
-          <div className="flex shrink-0 flex-col justify-center gap-1.5 border-r border-white/[0.08] pr-2 sm:pr-3">
-            <HudStatLabel>Base</HudStatLabel>
-            <LivesRing
-              value={state.playerBaseHp}
-              max={state.maxPlayerBaseHp}
-              pct={livesPct}
-              color={livesColor}
-            />
-          </div>
-
-          <div className="grid min-h-[2.75rem] min-w-0 flex-1 grid-cols-3 divide-x divide-white/[0.08]">
-            <div className="flex min-w-0 flex-col justify-center gap-1.5 px-2 sm:px-3">
-              <HudStatLabel>Gold</HudStatLabel>
-              <span className="inline-flex min-w-0 max-w-full items-baseline gap-1 truncate font-mono text-lg font-bold leading-none tabular-nums text-yellow-300">
-                <span className="shrink-0 text-yellow-400/90 text-base leading-none">◆</span>
-                <span className="min-w-0 truncate">{formatCompactCount(state.gold)}</span>
-              </span>
-            </div>
-
-            <div className="flex min-w-0 flex-col justify-center gap-1.5 px-2 sm:px-3">
-              <HudStatLabel>Score</HudStatLabel>
-              <span className="whitespace-nowrap font-mono text-base font-bold leading-none tabular-nums text-cyber-blue sm:text-lg">
-                {formatCompactCount(state.score)}
-              </span>
-            </div>
-
-            <div className="flex min-w-0 flex-col justify-center gap-1.5 px-2 sm:px-3">
-              <HudStatLabel>Kills</HudStatLabel>
-              <span className="font-mono text-lg font-bold leading-none tabular-nums text-cyber-purple">
-                {formatCompactCount(state.totalKills)}
-              </span>
-            </div>
-          </div>
-        </div>
+      {/* Left — compact stats */}
+      <div className="grid min-h-0 min-w-0 max-h-full w-full grid-cols-2 gap-1.5 self-center overflow-hidden border-r border-white/[0.07] pr-2">
+        <CompactStat label="Gold" value={formatCompactCount(state.gold)} tone="text-yellow-300" prefix="◆" />
+        <CompactStat label="HP" value={`${state.playerBaseHp}/${state.maxPlayerBaseHp}`} tone={livesColor === '#ff4444' ? 'text-red-300' : livesColor === '#ffcc00' ? 'text-yellow-300' : 'text-cyber-green'} />
+        <CompactStat label="Kills" value={formatCompactCount(state.totalKills)} tone="text-cyber-purple" />
+        <CompactStat label="Score" value={formatCompactCount(state.score)} tone="text-cyber-blue" />
       </div>
 
-      {/* Center — PvP match panel */}
-      <div className="flex h-full min-h-0 min-w-0 items-center justify-center overflow-x-visible overflow-y-hidden px-px">
-        <div
-          className="box-border flex h-[5.5rem] min-h-0 w-full min-w-0 max-w-xl flex-col justify-center gap-1 overflow-hidden rounded-xl border border-solid border-cyber-green/35 bg-cyber-green/[0.08] px-2.5 py-1.5 shadow-[0_8px_26px_rgba(0,0,0,0.35),0_0_14px_rgba(0,255,136,0.08)] sm:px-3"
-          style={{ backgroundClip: 'padding-box' }}
-        >
-          <div className="flex min-h-0 w-full min-w-0 max-w-full flex-nowrap items-center justify-between gap-x-2 border-b border-solid border-white/[0.09] pb-1 sm:gap-x-3">
-            <div className="flex min-h-0 min-w-0 flex-1 items-center gap-x-2 overflow-hidden">
-              <span
-                className={`h-2 w-2 shrink-0 rounded-full sm:h-2.5 sm:w-2.5 ${
-                  state.phase === 'playing' ? 'animate-pulse bg-cyber-green' : 'bg-cyber-green/75'
-                }`}
-              />
-              <span className="min-w-0 truncate font-mono text-xs font-black uppercase leading-none tracking-wide text-cyber-green sm:text-sm">
-                {state.phase === 'paused'
-                  ? 'PVP · PAUSED'
-                  : state.phase === 'playing'
-                    ? 'PVP · LIVE'
-                    : state.phase === 'wave_complete' || state.phase === 'menu'
-                      ? 'PVP · READY'
-                      : state.phase === 'victory'
-                        ? 'PVP · VICTORY'
-                        : state.phase === 'game_over'
-                          ? 'PVP · DEFEAT'
-                      : 'Ready'}
-              </span>
-            </div>
-            <div className="flex shrink-0 items-center gap-3 text-right font-mono text-[11px] tabular-nums text-white/65">
-              <span>Units {playerAttackers}/{opponentAttackers}</span>
-              <span>Towers {playerTowerCount}/{opponentTowerCount}</span>
-            </div>
-          </div>
-
-          <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-            <MatchSide
-              label="Your Core"
-              hp={state.playerBaseHp}
-              maxHp={state.maxPlayerBaseHp}
-              pct={livesPct}
-              heroLabel="Hero"
-              heroAlive={state.hero.isAlive}
-              heroHp={state.hero.hp}
-              heroMaxHp={state.hero.maxHp}
-              heroRespawnTimer={state.hero.respawnTimer}
-              heroPct={heroPct}
-              tone="blue"
-            />
-            <div className="font-mono text-xs font-black tracking-wide text-white/40">VS</div>
-            <MatchSide
-              label="Enemy Core"
-              hp={state.opponentBaseHp}
-              maxHp={state.maxOpponentBaseHp}
-              pct={opponentPct}
-              heroLabel="Hero"
-              heroAlive={state.opponentHero.isAlive}
-              heroHp={state.opponentHero.hp}
-              heroMaxHp={state.opponentHero.maxHp}
-              heroRespawnTimer={state.opponentHero.respawnTimer}
-              heroPct={opponentHeroPct}
-              tone="red"
-            />
-          </div>
-        </div>
-      </div>
+      <BattleLogsPanel
+        state={state}
+        voice={voice}
+        playerBattleLog={playerBattleLog}
+        opponentBattleLog={opponentBattleLog}
+      />
 
       {/* Right — speed + perf toggle + action button */}
       <div className="relative flex min-h-0 min-w-0 max-h-full flex-col items-end justify-center gap-1.5 self-center overflow-visible border-l border-white/[0.07] pl-3">
